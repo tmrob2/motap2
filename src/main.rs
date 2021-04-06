@@ -1,10 +1,11 @@
 //use itertools::{Itertools, enumerate};
 use clap::clap_app;
-use lib::{read_mdp_json, read_dra_json, MDP, DRA, ProductMDP, ProductDRA};
+use lib::{read_mdp_json, read_dra_json, MDP, DRA, ProductMDP, ProductDRA, ModelCheckingPair, DRAMod};
 use std::fs::File;
 use std::io::Write;
 use petgraph::{algo::kosaraju_scc,dot::Dot};
 use regex::{Regex};
+use std::collections::HashSet;
 
 fn main() {
     let matches = clap_app!(motap =>
@@ -149,25 +150,55 @@ fn main() {
 
     let mut product_mdp: ProductMDP = ProductMDP::default();
     let mut dra_product: ProductDRA = ProductDRA::default();
+    let mut safety_present: bool = false;
     match mdp {
         Some(m) => {
             match dras {
                 Some(x) => {
+                    let mut automatas_prime: Vec<DRAMod> = Vec::new();
                     for aut in x.iter() {
-                        dra_product.create_states(aut);
+                        let mut aut_prime = DRAMod {
+                            states: aut.states.to_vec(),
+                            sigma: aut.sigma.to_vec(),
+                            safety: aut.safety,
+                            initial: aut.initial,
+                            delta: aut.delta.to_vec(),
+                            acc: aut.acc.to_vec(),
+                            dead: vec![]
+                        };
+                        let g = aut_prime.generate_graph();
+                        let acc_node_indices = aut_prime.accepting_states(&g);
+                        let reachable_paths: Vec<(u32, bool)> = aut_prime.reachable_from_states(&g, &acc_node_indices);
+
+                        for (state, truth) in reachable_paths.iter() {
+                            if !*truth {
+                                aut_prime.dead.push(*state);
+                            }
+                        }
+
+                        println!("dead states: {:?}", aut_prime.dead);
+
+                        //let dra_dot = format!("{}", Dot::new(&a));
+                        //let mut file = File::create(format!("dra_prod_{}_MDP.dot",i+1)).unwrap();
+                        //file.write_all(&dra_dot.as_bytes());
+                        if aut.safety {
+                            safety_present = true;
+                        }
+                        dra_product.create_states(&aut_prime);
                         if verbose == 2 {
                             println!("DRA Product: {:?}", dra_product);
                         }
+                        automatas_prime.push(aut_prime);
                     }
-                    dra_product.sigma = x[0].sigma.clone();
-                    dra_product.create_transitions(&x);
-                    dra_product.set_initial(&x);
+                    dra_product.sigma = automatas_prime[0].sigma.clone();
+                    dra_product.create_transitions(&automatas_prime);
+                    dra_product.set_initial(&automatas_prime);
                     let task_count = ProductDRA::task_count(&x);
                     if verbose == 3 {
                         println!("DRA: {:?}", dra_product);
                     }
                     product_mdp.create_states(&m, &dra_product);
-                    product_mdp.create_transitions(&m, &dra_product, &task_count, &verbose);
+                    product_mdp.create_transitions(&m, &dra_product, &verbose, &automatas_prime);
                     product_mdp.set_initial(&m, &dra_product);
                     product_mdp.prune(&verbose);
                 },
@@ -193,23 +224,48 @@ fn main() {
     if graph_type > 0 {
         println!("Processing Graph");
         let g = product_mdp.generate_graph();
-        println!("graph: ");
-        println!("{:?}", g);
+        //println!("graph: ");
+        //println!("{:?}", g);
         let scc: Vec<Vec<petgraph::prelude::NodeIndex>> = kosaraju_scc(&g);
         let dot = format!("{}", Dot::new(&g));
         let mut count: u32 = 0;
         for ni_vect in scc.iter() {
             for ni in ni_vect.iter() {
                 let i = ni;
-                println!("{}:{:?}", count, g[*i]);
+                if verbose == 3 {
+                    println!("{}:{:?}", count, g[*i]);
+                }
             }
             count += 1;
         }
         let mut file = File::create("product_MDP.dot").unwrap();
         file.write_all(&dot.as_bytes());
-        product_mdp.find_mecs(&g);
+        if graph_type == 2 {
+            let mut nontriv_mecs = product_mdp.find_mecs(&g);
+            if verbose == 3 {
+                for (i, mec) in nontriv_mecs.iter().enumerate(){
+                    println!("{}:{:?}", i, mec);
+                }
+            }
+            let triv_mecs: HashSet<ModelCheckingPair> = product_mdp.find_trivial_mecs(&nontriv_mecs);
+
+            for (i, mec) in triv_mecs.iter().enumerate() {
+                if verbose == 3 {
+                    println!("Trivial MECs: {}:{:?}", i, mec);
+                }
+                if safety_present {
+                    nontriv_mecs.push(vec![mec.clone()]);
+                }
+            }
+            println!("Output MECs");
+            for (i, mec) in nontriv_mecs.iter().enumerate() {
+                println!("{}:{:?}", i, mec);
+            }
+        }
     }
 }
+
+
 
 #[cfg(test)]
 mod tests {
@@ -217,7 +273,7 @@ mod tests {
     use itertools::Itertools;
 
     #[test]
-    /// Test that an empty hashmap produces a lenght of zero
+    /// Test that an empty hashmap produces a length of zero
     fn cart_product() {
         let it = (0..2).cartesian_product((3..5));
         itertools::assert_equal(it, vec![(0,3),(0,4),(1,3),(1,4)])

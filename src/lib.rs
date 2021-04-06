@@ -10,7 +10,8 @@ use std::iter::FromIterator;
 use regex::{Regex};
 use petgraph::{Graph, graph::NodeIndex};
 use std::num::ParseIntError;
-use petgraph::algo::{kosaraju_scc};
+use petgraph::algo::{kosaraju_scc, has_path_connecting};
+use std::hash::Hash;
 
 //use lazy_static::lazy_static;
 extern crate serde_json;
@@ -25,13 +26,70 @@ pub struct DRA {
     pub acc: Vec<AcceptanceSet>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone)]
+pub struct DRAMod {
+    pub states: Vec<u32>,
+    pub sigma: Vec<String>,
+    pub safety: bool,
+    pub initial: u32,
+    pub delta: Vec<DRATransitions>,
+    pub acc: Vec<AcceptanceSet>,
+    pub dead: Vec<u32>
+}
+
+impl DRAMod {
+    pub fn generate_graph(&mut self) -> Graph<String, String> {
+        let mut graph: Graph<String, String> = Graph::new();
+
+        for state in self.states.iter() {
+            graph.add_node(format!("{}", state));
+        }
+        //println!("{:?}", graph.raw_nodes());
+        for transition in self.delta.iter() {
+            let origin_index = graph.node_indices().
+                find(|x| graph[*x] == format!("{}", transition.q)).unwrap();
+            let destination_index = match graph.node_indices().find(|x| graph[*x] == format!("{}", transition.q_prime)){
+                None => {panic!("state: {} not found!", transition.q_prime)}
+                Some(x) => {x}
+            };
+            graph.add_edge(origin_index, destination_index, format!("{:?}", transition.w.to_vec()));
+        }
+        graph
+    }
+
+    pub fn accepting_states(&self, g: &Graph<String, String>) -> Vec<NodeIndex> {
+        let mut acc_indices: Vec<NodeIndex> = Vec::new();
+        for state in self.acc.iter() {
+            for k in state.k.iter() {
+                let k_index = g.node_indices().
+                    find(|x| g[*x] == format!("{}", k)).unwrap();
+                acc_indices.push(k_index);
+            }
+        }
+        acc_indices
+    }
+
+    pub fn reachable_from_states(&self, g: &Graph<String, String>, acc: &Vec<NodeIndex>) -> Vec<(u32, bool)> {
+        let reachable: Vec<bool> = vec![true; self.states.len()];
+        let mut reachable_states: Vec<(u32, bool)> = self.states.iter().cloned().zip(reachable.into_iter()).collect();
+        for (state, truth) in reachable_states.iter_mut() {
+            let from_node_index: NodeIndex = g.node_indices().find(|x| g[*x] == format!("{}", state)).unwrap();
+            for k in acc.iter() {
+                *truth = has_path_connecting(g, from_node_index, *k, None);
+                println!("Path from {} to {} is {}", g[from_node_index], g[*k], truth);
+            }
+        }
+        reachable_states
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct AcceptanceSet {
     pub l: Vec<u32>,
     pub k: Vec<u32>
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct DRATransitions {
     q: u32,
     w: Vec<String>,
@@ -110,7 +168,7 @@ pub struct TempProductDRATransitions {
 }
 
 impl ProductDRA {
-    pub fn create_states(&mut self, dra: &DRA) {
+    pub fn create_states(&mut self, dra: &DRAMod) {
         if self.states.is_empty() {
             // this is the first product DRA
             for q in dra.states.iter() {
@@ -128,9 +186,9 @@ impl ProductDRA {
         }
     }
 
-    pub fn create_transitions(&mut self, dras: &Vec<DRA>) {
+    pub fn create_transitions(&mut self, dras: &Vec<DRAMod>) {
 
-        let re: Regex = Regex::new(r"\([0-9]\)").unwrap();
+        //let re: Regex = Regex::new(r"\([0-9]\)").unwrap();
         let mut temp_transitions: Vec<TempProductDRATransitions> = Vec::new();
 
         for w in self.sigma.iter() {
@@ -139,11 +197,13 @@ impl ProductDRA {
                 for (i, q) in state.iter().enumerate() {
                     // if w contains an (k) for k in N then we need to replace the number by a symbolic k
                     // the last DRA could be a safety property, we can check this with the DRA safety variable
-                    let mut new_word = w.to_string();
-                    if dras[i].safety {
+
+                    // In the product DRA we determine which task is active.
+                    let new_word = w.to_string();
+                    /*if dras[i].safety {
                         new_word = re.replace(w, "(k)").to_string();
                         //println!("w: {}, new word: {}", w, new_word);
-                    }
+                    }*/
                     for transition in dras[i].delta.iter().filter(|x| x.q == *q && x.w.contains(&new_word)){
                         q_prime[i] = transition.q_prime;
                     }
@@ -184,7 +244,7 @@ impl ProductDRA {
         count
     }
 
-    pub fn set_initial(&mut self, dras: &Vec<DRA>) {
+    pub fn set_initial(&mut self, dras: &Vec<DRAMod>) {
         let mut init: Vec<u32> = vec![0; dras.len()];
         for (i, dra) in dras.iter().enumerate() {
             init[i] = dra.initial;
@@ -228,7 +288,7 @@ impl ProductMDP {
         }
     }
 
-    pub fn create_transitions(&mut self, mdp: &MDP, dra: &ProductDRA, task_count: &u32, verbose: &u32) {
+    pub fn create_transitions(&mut self, mdp: &MDP, dra: &ProductDRA, verbose: &u32, dras: &Vec<DRAMod>) {
         for state_from in self.states.iter() {
             if *verbose == 2 {
                 println!("state from: {:?}", state_from);
@@ -236,20 +296,74 @@ impl ProductMDP {
             // For each state we want to filter the mdp transitions to that state
             for t in mdp.transitions.iter().filter(|x| x.s == state_from.s) {
                 // We then want to know, given some state in M, what state does it transition to?
-                for mdp_sprime in t.s_prime.iter() {
-                    // label may be empty, if empty, then we should treat it as no label
+                // there are exactly m DRAs currently added to the product (in the initial case this is 1)
+                // and we want to know that given DRA (task j), in the loop signature above, we enumerate over q
+                // for each task in the vector of DRAs minus the safety task, we want to determine what happens
+                // when we transition from s -> a -> s' such that the trace will be L(s')
+                // but the MDP wil have a non specific labelling, such as initiate(k)
 
-                    // there are exactly m DRAs currently added to the product (in the initial case this is 1)
-                    // and we want to know that given DRA (task j), in the loop signature above, we enumerate over q
-                    // for each task in the vector of DRAs minus the safety task, we want to determine what happens
-                    // when we transition from s -> a -> s' such that the trace will be L(s')
-                    // but the MDP wil have a non specific labelling, such as initiate(k)
-                    for task in 1..*task_count + 1{
-                        let mut p_transition = ProductTransition {
-                            sq: ModelCheckingPair {s: state_from.s, q: state_from.q.clone() },
-                            a: format!("{}{}",t.a.to_string(), task).to_string(),
-                            sq_prime: Vec::new()
-                        };
+                // Observe the state and determine which task is active, if the MDP state is 0 and the automata state is final
+                // then any of the remaining tasks can be chosen. We must always be thinking that the MDP is projecting its states
+                // onto some automata representing a task, but the MDP cannot switch from one task to another, it must continue with
+                // some active task to completion
+
+                // determine the active task
+                let mut inactive_tasks: Vec<usize> = Vec::new();
+                let mut active_task: bool = false;
+                let mut active_tasks: Vec<usize> = Vec::new();
+                let task_elements = state_from.q.split_last().unwrap().1;
+                let new_task = task_elements.iter().enumerate().
+                    all(|(i, x)| dras[i].initial == *x
+                        || dras[i].dead.iter().any(|y| y == x)
+                        || dras[i].acc.iter().any(|y| y.k.iter().any(|z|z == x)));
+                if new_task {
+                    if task_elements.iter().enumerate().all(|(i, x)| dras[i].dead.iter().any(|y| y == x)
+                        || dras[i].acc.iter().any(|y| y.k.iter().any(|z|z == x))) {
+                        // every task has finished
+                        println!("Every task has finished at state: {:?}", task_elements);
+                        // todo k is not the correct if we source the task elements
+                        for k in 0..task_elements.len(){
+                            inactive_tasks.push(k + 1);
+                        }
+                    } else {
+                        println!("There are tasks remaining: {:?}", task_elements);
+                        for (i,q) in task_elements.iter().enumerate() {
+                            if dras[i].initial == *q {
+                                println!("initiating task: {}", i + 1);
+                                inactive_tasks.push(i + 1);
+                            }
+                        }
+                    }
+                } else {
+                    active_task = true;
+                    println!("There is an  active task: {:?}", task_elements);
+                    for (i, q) in task_elements.iter().enumerate() {
+                        if dras[i].initial != *q
+                            && dras[i].dead.iter().all(|y| y != q)
+                            && dras[i].acc.iter().all(|y| y.k.iter().all(|z|z != q)) {
+                            active_tasks.push(i+1)
+                        }
+                    }
+                }
+                let mut task_queue: Vec<usize> = Vec::new();
+                if active_task {
+                    for task in active_tasks.into_iter() {
+                        task_queue.push(task);
+                    }
+                } else {
+                    for task in inactive_tasks.into_iter() {
+                        task_queue.push(task);
+                    }
+                }
+                println!("task queue: {:?}", task_queue);
+                for task in task_queue.iter() {
+                    let mut p_transition = ProductTransition {
+                        sq: ModelCheckingPair { s: state_from.s, q: state_from.q.clone() },
+                        a: format!("{}{}", t.a.to_string(), task).to_string(),
+                        sq_prime: Vec::new()
+                    };
+                    for mdp_sprime in t.s_prime.iter() {
+                        // label may be empty, if empty, then we should treat it as no label
                         // get the label specific to a task if it meets the appropriate pattern
                         let mut q_prime: Vec<u32> = Vec::new();
                         for lab in mdp.labelling.iter().filter(|l| l.s == mdp_sprime.s) {
@@ -258,7 +372,7 @@ impl ProductMDP {
                             // the enumerated task automaton e.g. (1) for automaton 0.
                             let mut ltemp: String = lab.w.clone();
                             if lab.w.contains("(k)") {
-                                let substring = format!("({})",task);
+                                let substring = format!("({})", task);
                                 ltemp = lab.w.to_string().replace(&*"(k)".to_string(), &*substring);
                                 if *verbose == 2 {
                                     println!("replaced {}, with {}", lab.w, ltemp);
@@ -273,13 +387,17 @@ impl ProductMDP {
                             }
                             if q_prime.is_empty() {
                                 println!("No transition was found for (q: {:?}, w: {})", state_from.q, ltemp);
+                                println!("Available transitions are: ");
+                                for dra_transition in dra.delta.iter().
+                                    filter(|qq| qq.q == state_from.q){
+                                    println!("{:?}", dra_transition);
+                                }
                             }
-                            self.labelling.push(ProductLabellingPair{ sq: ModelCheckingPair { s: mdp_sprime.s, q: q_prime.clone() }, w: vec![ltemp] });
-
+                            self.labelling.push(ProductLabellingPair { sq: ModelCheckingPair { s: mdp_sprime.s, q: q_prime.clone() }, w: vec![ltemp] });
                         }
                         p_transition.sq_prime.push(ModelCheckingPair{ s: mdp_sprime.s, q: q_prime });
-                        self.transitions.push(p_transition);
                     }
+                    self.transitions.push(p_transition);
                 }
             }
         }
@@ -375,11 +493,29 @@ impl ProductMDP {
         graph
     }
 
-    pub fn find_mecs(&self, g: &Graph<String, String>) -> () {
+    /// Function to identify the trivial MEC decomposition of the input graph.
+    /// This is essentially any self loop.
+    pub fn find_trivial_mecs(&self, mecs: &Vec<Vec<ModelCheckingPair>>) -> HashSet<ModelCheckingPair> {
+        // Given a list of MECs we are essentially looking for a state wihtin the MEC which has a
+        // self loop and greater than or equal to 2 actions.
+        let mut triv_mecs: HashSet<ModelCheckingPair> = HashSet::new();
+        for mec in mecs.iter() {
+            for state in mec.iter() {
+                for transition in self.transitions.iter().
+                    filter(|x| x.sq_prime.len() == 1 && x.sq_prime.contains(&x.sq) && x.sq == *state) {
+                    //println!("trivial transition: {:?}", transition);
+                    triv_mecs.insert(ModelCheckingPair{ s: transition.sq.s, q: transition.sq.q.to_vec() });
+                }
+            }
+        }
+        triv_mecs
+    }
+
+    /// Function to identify the non-trivial MEC decomposition of the graph
+    pub fn find_mecs(&self, g: &Graph<String, String>) -> Vec<Vec<ModelCheckingPair>> {
         let mut g_copy: Graph<String, String> = g.clone();
-        let mut test_counter: u32 = 0;
+        //let mut test_counter: u32 = 0;
         // we also need to establish a correspondence between the states of the MDP and the nodes of the graph
-        // todo is this even needed
         let mut state_actions: HashMap<ModelCheckingPair, HashSet<String>> = HashMap::new();
         for s in self.states.iter() {
             let mut action_vect: HashSet<String> = HashSet::new();
@@ -404,7 +540,7 @@ impl ProductMDP {
                     let str_state = &g_copy[*ni];
                     match self.convert_string_node_to_state(str_state) {
                         Some(x) => inner.push(x),
-                        None => {println!("Error on finding node with state: {}", str_state); return}
+                        None => {println!("Error on finding node with state: {}", str_state); return mec_new }
                     }
                 }
                 scc_state_ind.push(inner);
@@ -412,10 +548,10 @@ impl ProductMDP {
             for (i, t_k) in scc_state_ind.iter().enumerate() {
                 for (j, state) in t_k.iter().enumerate() {
                     let mut action_s: HashSet<String> = state_actions.get(&state).unwrap().clone();
-                    println!("actions: {:?}", action_s);
+                    //println!("actions: {:?}", action_s);
                     for transition in self.transitions.iter().filter(|x| x.sq == *state) {
                         for sprime in transition.sq_prime.iter() {
-                            println!("s': {:?}", sprime);
+                            //println!("s': {:?}", sprime);
                             if !t_k.iter().any(|x| x == sprime) {
                                 // is there is a state such that taking action 'a' leaves the SCC with P > 0 then
                                 // we remove this action from the SCC and it is not contained in the EC
@@ -433,39 +569,53 @@ impl ProductMDP {
                     }
                     state_actions.insert(state.clone(), action_s);
                 }
-                println!("T({}), SCC: {:?}, R: {:?}",i, t_k, remove);
+                //println!("T({}), SCC: {:?}, R: {:?}",i, t_k, remove);
             }
 
             while !remove.is_empty() {
+                //println!("remove: {:?} ; remove hist: {:?}", remove, removed_hist);
                 let mut remove_more: HashSet<RemoveSCCState> = HashSet::new();
                 let mut remove_actions: HashMap<RemoveSCCState, String> = HashMap::new();
+                // todo there is something here like the loop is not recognising the history because it
+                //  doesn't change over the course of the loop
                 for r in remove.drain() {
-                    println!("looking to remove: {:?}", r);
-                    let delete_index = g_copy.node_indices().find(|i| g_copy[*i] == format!("({},{:?})", r.state.s, r.state.q)).unwrap();
-                    g_copy.remove_node(delete_index);
-                    // remove the state from the SCCs
-                    for transition in self.transitions.iter().filter(|x| x.sq_prime.iter().any(|y| *y == r.state) && r.state != x.sq && removed_hist.iter().all(|y| *y != x.sq)){
-                        let mut remove_index: Vec<(usize, usize)> = Vec::new();
-                        for (k, v) in scc_state_ind.iter().enumerate() {
-                            println!("sccs({}):{:?}, transition state: {:?}", k, v, transition.sq);
-                            for (j, _state) in v.iter().filter(|x| **x == transition.sq).enumerate() {
-                                remove_index.push((k,j));
-                            }
+                    if !scc_state_ind[r.scc_ind].is_empty() {
+                        //println!("looking to remove: {:?}", r);
+                        if !removed_hist.iter().any(|x| x == &r.state) {
+                            let delete_index = g_copy.node_indices().find(|i| g_copy[*i] == format!("({},{:?})", r.state.s, r.state.q)).unwrap();
+                            g_copy.remove_node(delete_index);
                         }
-                        // there is a problem when the action is a part of a self loop, we are not handling this correctly
-                        remove_actions.insert(RemoveSCCState {
-                            state: ModelCheckingPair {s: transition.sq.s, q: transition.sq.q.clone()},
-                            scc_ind: remove_index[0].0,
-                            state_ind: remove_index[0].1,
-                        }, transition.a.to_string());
+
+                        // remove the state from the SCCs
+                        //println!("Removal History: {:?}", removed_hist);
+                        for transition in self.transitions.iter().filter(|x| x.sq_prime.iter().any(|y| *y == r.state) && r.state != x.sq && removed_hist.iter().all(|y| *y != x.sq)){
+                            let mut remove_index: Vec<(usize, usize)> = Vec::new();
+                            for (k, v) in scc_state_ind.iter().enumerate() {
+                                //println!("sccs({}):{:?}, transition state: {:?}", k, v, transition.sq);
+                                for (j, _state) in v.iter().filter(|x| **x == transition.sq).enumerate() {
+                                    remove_index.push((k,j));
+                                }
+                            }
+                            // there is a problem when the action is a part of a self loop, we are not handling this correctly
+                            remove_actions.insert(RemoveSCCState {
+                                state: ModelCheckingPair {s: transition.sq.s, q: transition.sq.q.clone()},
+                                scc_ind: remove_index[0].0,
+                                state_ind: remove_index[0].1,
+                            }, transition.a.to_string());
+                            //println!("Removal Actions: {:?}", remove_actions);
+                        }
+                        //println!("scc states: {:?}; total sccs: {:?}", scc_state_ind[r.scc_ind], scc_state_ind);
+                        scc_state_ind[r.scc_ind].remove(r.state_ind);
+                        removed_hist.push(r.state);
+                        //println!("state-actions pairs under review: {:?}", remove_actions);
                     }
-                    scc_state_ind[r.scc_ind].remove(r.state_ind);
-                    removed_hist.push(r.state);
-                    println!("state-actions pairs under review: {:?}", remove_actions);
                 }
                 for (state, action) in remove_actions.iter() {
                     let mut actions = state_actions.get(&state.state).unwrap().clone();
+                    //println!("actions: {:?}", actions);
                     if actions.is_empty() {
+                        //println!("History: {:?}", removed_hist);
+                        //println!("Found: {:?} to remove", state.state);
                         remove_more.insert(RemoveSCCState{state: state.state.clone(), scc_ind: state.scc_ind, state_ind: state.state_ind});
                     } else {
                         actions.remove(action);
@@ -473,39 +623,40 @@ impl ProductMDP {
                         state_actions.insert(state.state.clone(), actions);
                     }
                 }
-                println!("Remove updated: {:?}", remove_more);
+                //println!("Remove updated: {:?}", remove_more);
                 remove = remove_more.drain().collect();
             }
             // we have to remove the state from the sccs, before we can update what the new MECs are
-            let scc_test: Vec<Vec<petgraph::prelude::NodeIndex>> = kosaraju_scc(&g_copy);
-            let mut count: u32 = 0;
-            for ni_vect in scc_test.iter() {
-                for ni in ni_vect.iter() {
-                    let i = ni;
-                    println!("{}:{:?}", count, g_copy[*i]);
-                }
-                count += 1;
-            }
-            if test_counter >= 1 {
-                return;
-            }
-            test_counter += 1;
+            //let scc_test: Vec<Vec<petgraph::prelude::NodeIndex>> = kosaraju_scc(&g_copy);
+            //let mut count: u32 = 0;
+            //for ni_vect in scc_test.iter() {
+                //for ni in ni_vect.iter() {
+                    //let i = ni;
+                    //println!("{}:{:?}", count, g_copy[*i]);
+                //}
+                //count += 1;
+            //}
+            /*if test_counter >= 4 {
+                return mec_new
+            }*/
+            //test_counter += 1;
             mec_new = scc_state_ind.clone();
-            println!("Removal history: {:?}", removed_hist);
-            println!("Test counter: {}", test_counter);
+            //println!("Removal history: {:?}", removed_hist);
+            //println!("Test counter: {}", test_counter);
         }
+        mec_new
     }
 
     pub fn convert_string_node_to_state(&self, s: &str) -> Option<ModelCheckingPair> {
-        println!("state: {}", s);
-        let re: Regex = Regex::new(r"^\((?P<input1>[0-9]+),(?P<input2>\[[0-9+],\s[0-9+]\])\)").unwrap();
+        //println!("state: {}", s);
+        let re: Regex = Regex::new(r"^\((?P<input1>[0-9]+),(?P<input2>\[[0-9]+(?:,\s[0-9]+)*\])\)").unwrap();
         let input1 = re.captures(s).and_then(|x| {
             x.name("input1").map(|y| y.as_str())
         });
         let input2 = re.captures(s).and_then(|x| {
             x.name("input2").map(|y| y.as_str())
         });
-        println!("input1: {:?}, input2: {:?}", input1, input2);
+        //println!("input1: {:?}, input2: {:?}", input1, input2);
         let return_state: Option<ModelCheckingPair> = match parse_int(input1.unwrap()) {
             Ok(x) =>
                 {

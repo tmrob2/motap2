@@ -1,31 +1,48 @@
 [{
   "states": [0,1,2,3],
   "initial": 0,
-  "sigma": ["ready(1)", "exit", "parse(1)", "idle"],
+  "sigma": ["ready(1)", "exit", "parse(1)", "idle","ready(2)", "parse(2)"],
   "safety": false,
   "delta": [
     {"q":  0, "w": ["ready(1)"], "q_prime": 1},
-    {"q":  1, "w": ["ready(1)", "idle"], "q_prime": 1},
+    {"q":  1, "w": ["ready(1)", "ready(2)", "parse(2)","idle"], "q_prime": 1},
     {"q":  1, "w": ["exit"], "q_prime":  3},
     {"q":  1, "w": ["parse(1)"], "q_prime": 2},
-    {"q":  2, "w":  ["ready(1)", "exit", "parse(1)", "idle"], "q_prime":  2},
-    {"q":  3, "w":  ["ready(1)", "exit", "parse(1)", "idle"], "q_prime":  3}
+    {"q":  2, "w":  ["ready(1)", "exit", "parse(1)", "idle","ready(2)", "parse(2)"], "q_prime":  2},
+    {"q":  3, "w":  ["ready(1)", "exit", "parse(1)", "idle","ready(2)", "parse(2)"], "q_prime":  3}
   ],
   "acc": [
     {"l":  [], "k":  [2]}
   ]
 },{
-  "states": [0,1],
+  "states": [0,1,2,3,4],
   "initial": 0,
-  "sigma": ["ready(1)", "exit", "parse(1)", "idle"],
-  "safety": true,
+  "sigma": ["ready(1)", "exit", "parse(1)", "idle","ready(2)", "parse(2)"],
+  "safety": false,
   "delta": [
-    {"q":  0, "w": ["ready(k)", "exit", "parse(k)"], "q_prime": 0},
-    {"q":  0, "w": ["idle"], "q_prime": 1},
-    {"q":  1, "w": ["exit", "parse(k)", "idle"], "q_prime":  1},
-    {"q":  1, "w": ["ready(k)"], "q_prime":  0}
+    {"q":  0, "w": ["ready(2)"], "q_prime": 1},
+    {"q":  1, "w": ["ready(2)", "idle", "ready(1)", "parse(1)"], "q_prime": 1},
+    {"q":  1, "w": ["exit"], "q_prime":  4},
+    {"q":  1, "w": ["parse(2)"], "q_prime": 2},
+    {"q":  2, "w": ["ready(2)", "idle", "ready(1)","parse(1)"], "q_prime":  2},
+    {"q":  2, "w": ["parse(2)"], "q_prime": 3 },
+    {"q":  2, "w": ["exit"], "q_prime":  4},
+    {"q":  3, "w":  ["ready(1)", "exit", "parse(1)", "idle","ready(2)", "parse(2)"], "q_prime":  3},
+    {"q":  4, "w":  ["ready(1)", "exit", "parse(1)", "idle","ready(2)", "parse(2)"], "q_prime":  4}
   ],
   "acc": [
-    {"l":  [1], "k":  [0]}
+    {"l":  [], "k":  [3]}
   ]
+}, {
+  "states": [0,1],
+  "initial": 0,
+  "sigma": ["ready(1)", "exit", "parse(1)", "idle","ready(2)", "parse(2)"],
+  "safety": true,
+  "delta": [
+    {"q": 0, "w": ["ready(1)", "exit", "parse(1)","ready(2)", "parse(2)"], "q_prime": 0},
+    {"q": 0, "w": ["idle"], "q_prime": 1},
+    {"q": 1, "w": ["exit", "parse(1)", "idle", "parse(2)", "idle"], "q_prime":  1},
+    {"q": 1, "w": ["ready(1)", "ready(2)"], "q_prime": 0}
+  ],
+  "acc": [{"l": [1], "k": [0]}]
 }]
