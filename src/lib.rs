@@ -320,23 +320,31 @@ impl ProductMDP {
                     if task_elements.iter().enumerate().all(|(i, x)| dras[i].dead.iter().any(|y| y == x)
                         || dras[i].acc.iter().any(|y| y.k.iter().any(|z|z == x))) {
                         // every task has finished
-                        println!("Every task has finished at state: {:?}", task_elements);
+                        if *verbose == 2 {
+                            println!("Every task has finished at state: {:?}", task_elements);
+                        }
                         // todo k is not the correct if we source the task elements
                         for k in 0..task_elements.len(){
                             inactive_tasks.push(k + 1);
                         }
                     } else {
-                        println!("There are tasks remaining: {:?}", task_elements);
+                        if *verbose == 2 {
+                            println!("There are tasks remaining: {:?}", task_elements);
+                        }
                         for (i,q) in task_elements.iter().enumerate() {
                             if dras[i].initial == *q {
-                                println!("initiating task: {}", i + 1);
+                                if *verbose == 2 {
+                                    println!("initiating task: {}", i + 1);
+                                }
                                 inactive_tasks.push(i + 1);
                             }
                         }
                     }
                 } else {
                     active_task = true;
-                    println!("There is an  active task: {:?}", task_elements);
+                    if *verbose == 2{
+                        println!("There is an  active task: {:?}", task_elements);
+                    }
                     for (i, q) in task_elements.iter().enumerate() {
                         if dras[i].initial != *q
                             && dras[i].dead.iter().all(|y| y != q)
@@ -355,7 +363,9 @@ impl ProductMDP {
                         task_queue.push(task);
                     }
                 }
-                println!("task queue: {:?}", task_queue);
+                if *verbose == 2 {
+                    println!("task queue: {:?}", task_queue);
+                }
                 for task in task_queue.iter() {
                     let mut p_transition = ProductTransition {
                         sq: ModelCheckingPair { s: state_from.s, q: state_from.q.clone() },
@@ -386,11 +396,13 @@ impl ProductMDP {
                                 q_prime = dra_transition.q_prime.clone();
                             }
                             if q_prime.is_empty() {
-                                println!("No transition was found for (q: {:?}, w: {})", state_from.q, ltemp);
-                                println!("Available transitions are: ");
-                                for dra_transition in dra.delta.iter().
-                                    filter(|qq| qq.q == state_from.q){
-                                    println!("{:?}", dra_transition);
+                                if *verbose == 2 {
+                                    println!("No transition was found for (q: {:?}, w: {})", state_from.q, ltemp);
+                                    println!("Available transitions are: ");
+                                    for dra_transition in dra.delta.iter().
+                                        filter(|qq| qq.q == state_from.q) {
+                                        println!("{:?}", dra_transition);
+                                    }
                                 }
                             }
                             self.labelling.push(ProductLabellingPair { sq: ModelCheckingPair { s: mdp_sprime.s, q: q_prime.clone() }, w: vec![ltemp] });
