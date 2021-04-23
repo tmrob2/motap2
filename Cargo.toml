@@ -25,9 +25,13 @@ regex = "1.4.5"
 name="lib"
 path="src/lib.rs"
 
+#[[bin]]
+#name = "long_run"
+#path = "src/long_run.rs"
+
 [[bin]]
-name = "motap"
-path = "src/main.rs"
+name = "dfa"
+path = "src/dfa_based.rs"
 
 [[bench]]
 name="benchmark"

@@ -1,11 +1,10 @@
 //use itertools::{Itertools, enumerate};
 use clap::clap_app;
-use lib::{read_mdp_json, read_dra_json, MDP, DRA, ProductMDP, ProductDRA, ModelCheckingPair, DRAMod};
+use lib::{read_mdp_json, read_dra_json, MDP, DRA, ProductMDP, ProductDRA, DRAMod};
 use std::fs::File;
 use std::io::Write;
 use petgraph::{algo::kosaraju_scc,dot::Dot};
 use regex::{Regex};
-use std::collections::HashSet;
 
 fn main() {
     let matches = clap_app!(motap =>
@@ -61,6 +60,7 @@ fn main() {
            3 - results
            ")
            (@arg TEST: -t --test "test some code")
+           (@arg LABEL: -l --label "present the labelling of a product MDP")
            (@arg GRAPH: -g --graph [GRAPH_TYPE] default_value("0") "generates a product graph type: \
            1 - Product Graph
            2 - Modified Product Graph
@@ -73,6 +73,16 @@ fn main() {
     let test: bool = match matches.subcommand() {
         ("motap", Some(f)) => {
             match f.occurrences_of("TEST") {
+                0 => false,
+                1 | _ => true
+            }
+        },
+        (_,_) => false
+    };
+
+    let labelling: bool = match matches.subcommand() {
+        ("motap", Some(f)) => {
+            match f.occurrences_of("LABEL") {
                 0 => false,
                 1 | _ => true
             }
@@ -128,6 +138,7 @@ fn main() {
         (_,_) => {""}
     };
 
+    // TODO this now needs to be edited to reflect multiple MDP inputs
     let mdp: Option<MDP> = match read_mdp_json(mdp_path_val) {
         Ok(u) => {
             if verbose == 1 {
@@ -184,6 +195,7 @@ fn main() {
                         if aut.safety {
                             safety_present = true;
                         }
+
                         dra_product.create_states(&aut_prime);
                         if verbose == 2 {
                             println!("DRA Product: {:?}", dra_product);
@@ -193,14 +205,15 @@ fn main() {
                     dra_product.sigma = automatas_prime[0].sigma.clone();
                     dra_product.create_transitions(&automatas_prime);
                     dra_product.set_initial(&automatas_prime);
-                    let task_count = ProductDRA::task_count(&x);
+                    //let task_count = ProductDRA::task_count(&x);
                     if verbose == 3 {
                         println!("DRA: {:?}", dra_product);
                     }
                     product_mdp.create_states(&m, &dra_product);
-                    product_mdp.create_transitions(&m, &dra_product, &verbose, &automatas_prime);
+                    product_mdp.create_transitions(&m, &dra_product, &verbose, &automatas_prime, &safety_present);
                     product_mdp.set_initial(&m, &dra_product);
                     product_mdp.prune(&verbose);
+                    product_mdp.update_prod_labelling(&automatas_prime);
                 },
                 None => {println!("There was an error reading DRAs"); return}
             }
@@ -216,6 +229,18 @@ fn main() {
         for t in product_mdp.transitions.iter() {
             println!("{:?}", t);
         }
+        for l in product_mdp.labelling.iter() {
+            println!("{:?}", l);
+        }
+    }
+
+    // It turns out the MEC identification might not be important at all, this is because it is
+    // more important to determine task completion based on labelling rather than whether the part
+    // of the graph structure occupied is considered an MEC. For example a task might have been
+    // completed and therefore requires a modification but the next state might not be contained
+    // within an MEC
+
+    if labelling {
         for l in product_mdp.labelling.iter() {
             println!("{:?}", l);
         }
@@ -241,12 +266,15 @@ fn main() {
         let mut file = File::create("product_MDP.dot").unwrap();
         file.write_all(&dot.as_bytes());
         if graph_type == 2 {
-            let mut nontriv_mecs = product_mdp.find_mecs(&g);
+            let nontriv_mecs = product_mdp.find_mecs(&g);
             if verbose == 3 {
                 for (i, mec) in nontriv_mecs.iter().enumerate(){
                     println!("{}:{:?}", i, mec);
                 }
             }
+            /*
+            We don't need to do this because the intersection of languages from a co-safe LTL
+            and a safety property is a co-safe property
             let triv_mecs: HashSet<ModelCheckingPair> = product_mdp.find_trivial_mecs(&nontriv_mecs);
 
             for (i, mec) in triv_mecs.iter().enumerate() {
@@ -257,6 +285,11 @@ fn main() {
                     nontriv_mecs.push(vec![mec.clone()]);
                 }
             }
+
+             */
+            // TODO next step is to collapse the MECs to one state,
+            // TODO construct the modified MDP structure
+            // TODO construct the team structure by adding switch transitions
             println!("Output MECs");
             for (i, mec) in nontriv_mecs.iter().enumerate() {
                 println!("{}:{:?}", i, mec);

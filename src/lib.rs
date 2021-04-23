@@ -12,6 +12,7 @@ use petgraph::{Graph, graph::NodeIndex};
 use std::num::ParseIntError;
 use petgraph::algo::{kosaraju_scc, has_path_connecting};
 use std::hash::Hash;
+use ndarray::arr1;
 
 //use lazy_static::lazy_static;
 extern crate serde_json;
@@ -24,6 +25,16 @@ pub struct DRA {
     pub initial: u32,
     pub delta: Vec<DRATransitions>,
     pub acc: Vec<AcceptanceSet>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DFA {
+    pub states: Vec<u32>,
+    pub sigma: Vec<String>,
+    pub initial: u32,
+    pub delta: Vec<DRATransitions>,
+    pub acc: Vec<u32>,
+    pub dead: Vec<u32>
 }
 
 #[derive(Debug, Clone)]
@@ -76,7 +87,7 @@ impl DRAMod {
             let from_node_index: NodeIndex = g.node_indices().find(|x| g[*x] == format!("{}", state)).unwrap();
             for k in acc.iter() {
                 *truth = has_path_connecting(g, from_node_index, *k, None);
-                println!("Path from {} to {} is {}", g[from_node_index], g[*k], truth);
+                //println!("Path from {} to {} is {}", g[from_node_index], g[*k], truth);
             }
         }
         reachable_states
@@ -128,6 +139,12 @@ pub struct TransitionPair {
 pub struct ModelCheckingPair {
     pub s: u32,
     pub q: Vec<u32>
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct DFAModelCheckingPair {
+    pub s: u32,
+    pub q: u32,
 }
 
 #[derive(Debug)]
@@ -288,7 +305,7 @@ impl ProductMDP {
         }
     }
 
-    pub fn create_transitions(&mut self, mdp: &MDP, dra: &ProductDRA, verbose: &u32, dras: &Vec<DRAMod>) {
+    pub fn create_transitions(&mut self, mdp: &MDP, dra: &ProductDRA, verbose: &u32, dras: &Vec<DRAMod>, safety_present: &bool) {
         for state_from in self.states.iter() {
             if *verbose == 2 {
                 println!("state from: {:?}", state_from);
@@ -311,7 +328,11 @@ impl ProductMDP {
                 let mut inactive_tasks: Vec<usize> = Vec::new();
                 let mut active_task: bool = false;
                 let mut active_tasks: Vec<usize> = Vec::new();
-                let task_elements = state_from.q.split_last().unwrap().1;
+                let task_elements: &[u32] = if *safety_present {
+                    state_from.q.split_last().unwrap().1
+                } else {
+                    &state_from.q[..]
+                };
                 let new_task = task_elements.iter().enumerate().
                     all(|(i, x)| dras[i].initial == *x
                         || dras[i].dead.iter().any(|y| y == x)
@@ -323,7 +344,6 @@ impl ProductMDP {
                         if *verbose == 2 {
                             println!("Every task has finished at state: {:?}", task_elements);
                         }
-                        // todo k is not the correct if we source the task elements
                         for k in 0..task_elements.len(){
                             inactive_tasks.push(k + 1);
                         }
@@ -411,6 +431,47 @@ impl ProductMDP {
                     }
                     self.transitions.push(p_transition);
                 }
+            }
+        }
+    }
+
+    /// Adds in the task k labelling update i.e. {init, success, fail}
+    ///
+    /// ** Note
+    /// This function is a new addition and will always be somewhat redundant
+    /// because we can do this in the create transitions or create states function can minimise
+    /// the required loops over states by one.
+    pub fn update_prod_labelling(&mut self, dras: &Vec<DRAMod>, safety_present: &bool) {
+        for state in self.states.iter() {
+            let mut state_label_found: bool = false;
+            let mut state_label: Vec<String> = Vec::new();
+            let mut label_index: Option<usize> = None;
+            for (i, l) in self.labelling.iter().enumerate().filter(|(_ii,x)| x.sq == *state) {
+                state_label_found = true;
+                state_label = l.w.to_vec();
+                label_index = Some(i);
+            }
+            let q_bar: &[u32] = if *safety_present {
+                state.q.split_last().unwrap().1
+            } else {
+                &state.q[..]
+            };
+
+            for (i, q) in q_bar.iter().enumerate() {
+                if dras[i].dead.iter().any(|y| y == q) {
+                    // label as fail (i)
+                    state_label.push(format!("fail({})", i))
+
+                } else if dras[i].acc.iter().any(|y| y.k.iter().any(|z|z == q)) {
+                    // label as success (i)
+                    state_label.push(format!("success({})",i))
+                }
+            }
+
+            if state_label_found {
+                self.labelling[label_index.unwrap()].w = state_label;
+            } else {
+                self.labelling.push(ProductLabellingPair{ sq: ModelCheckingPair { s: state.s, q: state.q.to_vec() }, w: state_label });
             }
         }
     }
@@ -588,8 +649,6 @@ impl ProductMDP {
                 //println!("remove: {:?} ; remove hist: {:?}", remove, removed_hist);
                 let mut remove_more: HashSet<RemoveSCCState> = HashSet::new();
                 let mut remove_actions: HashMap<RemoveSCCState, String> = HashMap::new();
-                // todo there is something here like the loop is not recognising the history because it
-                //  doesn't change over the course of the loop
                 for r in remove.drain() {
                     if !scc_state_ind[r.scc_ind].is_empty() {
                         //println!("looking to remove: {:?}", r);
@@ -700,6 +759,765 @@ impl ProductMDP {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct DFAProductTransition {
+    pub sq: DFAModelCheckingPair,
+    pub a: String,
+    pub sq_prime: Vec<DFATransitionPair>,
+    pub reward: f64
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct DFAProductLabellingPair {
+    pub sq: DFAModelCheckingPair,
+    pub w: Vec<String>
+}
+
+/// A DFA transition pair is a state and a probability of transitioning to this state
+#[derive(Debug, Clone, PartialEq)]
+pub struct DFATransitionPair {
+    pub state: DFAModelCheckingPair,
+    pub p: f64
+}
+
+#[derive(Clone, Debug)]
+pub struct DFAProductMDP {
+    pub states: Vec<DFAModelCheckingPair>,
+    pub initial: DFAModelCheckingPair,
+    pub transitions: Vec<DFAProductTransition>,
+    pub labelling: Vec<DFAProductLabellingPair>,
+}
+
+impl DFAProductMDP {
+    pub fn create_states(&mut self, mdp: &MDP, dfa: &DFA) {
+        self.states = Vec::new();
+        let cp= mdp.states.clone().into_iter().cartesian_product(dfa.states.clone().into_iter());
+        for (s_m, q_a) in cp.into_iter() {
+            self.states.push(DFAModelCheckingPair{ s: s_m, q: q_a});
+        }
+    }
+
+    pub fn create_labelling(&mut self, mdp: &MDP) {
+        for state in self.states.iter() {
+            for mdp_label in mdp.labelling.iter().filter(|x| x.s == state.s) {
+                self.labelling.push(DFAProductLabellingPair{
+                    sq: DFAModelCheckingPair { s: state.s, q: state.q },
+                    w: vec![mdp_label.w.to_string()]
+                });
+            }
+        }
+        /*for label in self.labelling.iter() {
+            println!("debug label: {:?}", label);
+        }*/
+    }
+
+    pub fn create_transitions(&mut self, mdp: &MDP, dfa: &DFA) {
+        for state in self.states.iter() {
+            for transition in mdp.transitions.iter()
+                .filter(|x| x.s == state.s) {
+                let mut t = DFAProductTransition {
+                    sq: DFAModelCheckingPair { s: state.s, q: state.q },
+                    a: transition.a.to_string(),
+                    sq_prime: vec![],
+                    reward: 0.0
+                };
+                t.reward = transition.rewards; // this is the reward inherited from the MDP
+                for sprime in transition.s_prime.iter() {
+                    for lab in mdp.labelling.iter()
+                        .filter(|l| l.s == sprime.s) {
+                        for q_prime in dfa.delta.iter()
+                            .filter(|q| q.q == state.q && q.w.iter().any(|xx| *xx == lab.w)) {
+                            t.sq_prime.push(DFATransitionPair {
+                                state: DFAModelCheckingPair {s: sprime.s, q: q_prime.q_prime},
+                                p: sprime.p
+                            })
+                        }
+                    }
+                }
+                self.transitions.push(t);
+            }
+        }
+    }
+
+    /// Prune does graph analysis to check if there is a path from an initial state to any other
+    /// state. If the has_path returns ```false``` then the state is removed from the graph and
+    /// subsequently the Product MDP (DFA).
+    pub fn prune_candidates(&mut self, reachable_state: &Vec<(DFAModelCheckingPair, bool)>) -> (Vec<usize>,Vec<DFAModelCheckingPair>){
+        let mut prune_state_indices: Vec<usize> = Vec::new();
+        let mut prune_states: Vec<DFAModelCheckingPair> = Vec::new();
+        for (state, _truth) in reachable_state.iter().
+            filter(|(_x,t)| !*t) {
+            let remove_index = self.states.iter().position(|y| y == state).unwrap();
+            prune_state_indices.push(remove_index);
+            prune_states.push(self.states[remove_index].clone())
+        }
+        // find the transitions relating to the prune states.
+        (prune_state_indices, prune_states)
+    }
+
+    pub fn prune_states_transitions(&mut self, prune_state_indices: &Vec<usize>, prune_states: &Vec<DFAModelCheckingPair>) {
+        let mut new_transitions: Vec<DFAProductTransition> = Vec::new();
+        let prune_state_hash: HashSet<_> = HashSet::from_iter(prune_states.iter().cloned());
+        for transition in self.transitions.iter().
+            filter(|x| prune_states.iter().all(|y| *y != x.sq) && {
+                let mut sq_prime: Vec<DFAModelCheckingPair> = vec![DFAModelCheckingPair{ s: 0, q: 0 }; x.sq_prime.len()];
+                for (i, xx) in x.sq_prime.iter().enumerate() {
+                    sq_prime[i] = xx.state.clone();
+                }
+                let sq_prime_hash: HashSet<DFAModelCheckingPair> = HashSet::from_iter(sq_prime.iter().cloned());
+                let intersection: HashSet<_> = prune_state_hash.intersection(&sq_prime_hash).collect();
+                intersection.is_empty()
+            }){
+            new_transitions.push(DFAProductTransition {
+                sq: DFAModelCheckingPair { s: transition.sq.s, q: transition.sq.q },
+                a: transition.a.to_string(),
+                sq_prime: transition.sq_prime.to_vec(),
+                reward: transition.reward
+            });
+        }
+
+        self.transitions = new_transitions;
+        let mut new_states: Vec<DFAModelCheckingPair> = Vec::new();
+        for (i, state) in self.states.iter().enumerate() {
+            let delete_truth = prune_state_indices.iter().any(|x| *x == i);
+            if !delete_truth {
+                new_states.push(DFAModelCheckingPair { s: state.s, q: state.q })
+            }
+        }
+        self.states = new_states;
+    }
+
+    pub fn reachable_from_initial(&self, g: &Graph<String, String>) -> Vec<(DFAModelCheckingPair, bool)> {
+        let initial: NodeIndex = g.node_indices().
+            find(|x| g[*x] == format!("({},{})", self.initial.s, self.initial.q)).unwrap();
+        let reachable: Vec<bool> = vec![true; self.states.len()];
+        let mut reachable_states: Vec<(DFAModelCheckingPair, bool)> = self.states.iter().cloned().
+            zip(reachable.into_iter()).collect();
+        for (state, truth) in reachable_states.iter_mut() {
+            let to_node_index: NodeIndex = g.node_indices().
+                find(|x| g[*x] == format!("({},{})", state.s, state.q)).unwrap();
+            *truth = has_path_connecting(g, initial, to_node_index, None);
+            //println!("Path from {} to {} is {}", g[initial], g[to_node_index], truth);
+        }
+        reachable_states
+    }
+
+    pub fn prune_graph(&self, g: &mut Graph<String, String>, prune_states: &Vec<usize>) {
+        for state in prune_states.iter() {
+            let delete = g.node_indices().
+                find(|x| g[*x] == format!("({},{})", self.states[*state].s, self.states[*state].q)).unwrap();
+            g.remove_node(delete);
+        }
+    }
+
+    pub fn generate_graph(&self) -> Graph<String, String> {
+        let mut graph: Graph<String, String> = Graph::new();
+
+        for state in self.states.iter() {
+            graph.add_node(format!("({},{})", state.s, state.q));
+        }
+        for transition in self.transitions.iter() {
+            let origin_index = graph.node_indices().
+                find(|x| graph[*x] == format!("({},{})", transition.sq.s, transition.sq.q)).unwrap();
+            for sq_prime in transition.sq_prime.iter() {
+                let destination_index = match graph.node_indices().
+                    find(|x| graph[*x] == format!("({},{})", sq_prime.state.s, sq_prime.state.q)){
+                    None => {
+                        println!("transition: {:?}", transition);
+                        panic!("state: ({},{:?}) not found!", sq_prime.state.s, sq_prime.state.q)
+                    }
+                    Some(x) => {x}
+                };
+                graph.add_edge(origin_index, destination_index, transition.a.to_string());
+            }
+        }
+        graph
+    }
+
+    pub fn modify_complete(&mut self, dfa: &DFA) {
+        let mut transition_modifications: Vec<DFAProductTransition> = Vec::new();
+        let mut state_modifications: HashSet<DFAModelCheckingPair> = HashSet::new();
+        let mut label_modifications: HashSet<DFAProductLabellingPair> = HashSet::new();
+        for state in self.states.iter().
+            filter(|x| dfa.acc.iter().all(|y| *y != x.q)) {
+            for transition in self.transitions.iter_mut().
+                filter(|x| x.sq == *state &&
+                    x.sq_prime.iter().
+                        any(|xx| dfa.acc.iter().
+                            any(|yy| *yy == xx.state.q))) {
+                //println!("observed transitions for state: {:?}", transition);
+                for sq_prime in transition.sq_prime.iter_mut().
+                    filter(|x| dfa.acc.iter().any(|y| *y == x.state.q)){
+                    transition_modifications.push(DFAProductTransition {
+                        sq: DFAModelCheckingPair { s: 999, q: sq_prime.state.q },
+                        a: "tau".to_string(),
+                        sq_prime: vec![sq_prime.clone()],
+                        reward: transition.reward
+                    });
+                    sq_prime.state.s = 999; //  change the transition state to s*=999 coded
+                    state_modifications.insert(DFAModelCheckingPair {
+                        s: 999,
+                        q: sq_prime.state.q
+                    });
+                    // finally we need to modify the labels which go along with the additional
+                    // reward state
+                    label_modifications.insert(DFAProductLabellingPair {
+                        sq: DFAModelCheckingPair { s: 999, q: sq_prime.state.q },
+                        w: vec!["com".to_string()]
+                    });
+                }
+            }
+        }
+        for state_mod in state_modifications.into_iter() {
+            self.states.push(state_mod);
+        }
+        for transition in transition_modifications.into_iter() {
+            self.transitions.push(transition);
+        }
+        for label in label_modifications.into_iter() {
+            self.labelling.push(label);
+        }
+    }
+
+    pub fn edit_labelling(&mut self, dfa: &DFA, mdp: &MDP) {
+        // edit labelling
+        //println!("dfa accepting: {:?}", dfa.acc);
+        //println!("dfa rejecting: {:?}", dfa.dead);
+        for label in self.labelling.iter_mut() {
+            if label.sq == self.initial {
+                // this is an initial state
+                label.w.push("ini".to_string());
+                //println!("state {:?} has been identified as a initial state", label.sq);
+            } else if dfa.dead.iter().any(|x| *x == label.sq.q) && label.sq.s == mdp.initial {
+                // this is a rejected state
+                label.w.push("fai".to_string());
+                //println!("state {:?} has been identified as a rejecting state", label.sq);
+            } else if dfa.acc.iter().any(|x| *x == label.sq.q) && label.sq.s == mdp.initial {
+                // this is a successful state from which switch transitions are possible to
+                // hand over
+                //println!("state {:?} has been identified as an accepting state", label.sq);
+                label.w.push("suc".to_string());
+            }
+        }
+    }
+
+    /// Creates an empty Product MDP as a skeleton structure for filling in with various
+    /// implementation functions
+    pub fn default() -> DFAProductMDP {
+        DFAProductMDP {
+            states: vec![],
+            initial: DFAModelCheckingPair { s: 0, q: 0 },
+            transitions: vec![],
+            labelling: vec![]
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TeamInput {
+    pub agent: usize,
+    pub task: usize,
+    pub product: DFAProductMDP
+}
+
+impl TeamInput {
+    pub fn default() -> TeamInput {
+        TeamInput {
+            agent: 0,
+            task: 0,
+            product: DFAProductMDP {
+                states: vec![],
+                initial: DFAModelCheckingPair { s: 0, q: 0 },
+                transitions: vec![],
+                labelling: vec![],
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct TeamState {
+    pub state: DFAModelCheckingPair,
+    pub agent: usize,
+    pub task: usize
+}
+
+#[derive(Debug)]
+pub struct TeamTransition {
+    pub from: TeamState,
+    pub a: String,
+    pub to: Vec<TeamTransitionPair>,
+    pub reward: Vec<f64>
+}
+
+#[derive(Debug, Clone)]
+pub struct TeamTransitionPair {
+    pub state: TeamState,
+    pub p: f64
+}
+
+#[derive(Debug)]
+pub struct TeamLabelling {
+    pub state: TeamState,
+    pub label: Vec<String>
+}
+
+pub struct TeamMDP {
+    pub states: Vec<TeamState>,
+    pub transitions: Vec<TeamTransition>,
+    pub labelling: Vec<TeamLabelling>,
+    pub num_agents: usize,
+    pub num_tasks: usize,
+}
+
+impl TeamMDP {
+    pub fn create_states(&mut self, team_input: &Vec<TeamInput>) {
+        for task_agent in team_input.iter() {
+            for state in task_agent.product.states.iter() {
+                self.states.push(TeamState {
+                    state: DFAModelCheckingPair { s: state.s, q: state.q },
+                    agent: task_agent.agent,
+                    task: task_agent.task
+                });
+            }
+        }
+    }
+
+    pub fn create_transitions_and_labelling(&mut self, team_input: &Vec<TeamInput>) {
+        for state in self.states.iter() {
+            for input in team_input.iter().
+                filter(|x| x.task == state.task && x.agent == state.agent) {
+                // Transitions
+                for transition in input.product.transitions.iter().
+                    filter(|x| x.sq == state.state) {
+                    let mut state_prime: Vec<TeamTransitionPair> = Vec::new();
+                    for s_prime in transition.sq_prime.iter() {
+                        state_prime.push(TeamTransitionPair {
+                            state: TeamState {
+                                state: DFAModelCheckingPair { s: s_prime.state.s, q: s_prime.state.q },
+                                agent: state.agent,
+                                task: state.task
+                            },
+                            p: s_prime.p
+                        })
+                    }
+                    // this transition is inherited from the input product model, and it will be zero
+                    // everywhere else
+                    let mut rewards: Vec<f64> = vec![0.0; self.num_tasks + self.num_agents];
+                    let state_label = input.product.labelling.iter().
+                        find(|x| x.sq == state.state).unwrap().w.to_vec();
+                    //println!("state label: {:?}", state_label);
+                    if state_label.iter().all(|x| *x != "suc" && *x != "fai") {
+                        //println!("state: {:?}, agent: {}, task: {} contains no completion labels", state.state, state.agent, state.task);
+                        if transition.reward != 0f64 {
+                            rewards[input.agent] = -1.0 * transition.reward;
+                        }
+                    }
+                    //println!("debug rewards: {:?}", rewards);
+                    self.transitions.push(TeamTransition {
+                        from: TeamState {
+                            state: DFAModelCheckingPair { s: state.state.s, q: state.state.q },
+                            agent: state.agent,
+                            task: state.task
+                        },
+                        a: transition.a.to_string(),
+                        to: state_prime,
+                        // the question is how do we assign a value to the rewards vector
+                        reward: rewards
+                    });
+                }
+                // Labelling
+                for label_pair in input.product.labelling.iter().
+                    filter(|x| x.sq == state.state) {
+                    //println!("working on agent: {0} of {2}; task: {1} of {3}", state.agent, state.task, self.num_agents - 1, self.num_tasks - 1);
+                    // switching across agents, same task
+                    if label_pair.w.iter().any(|x| *x == "ini" || *x == "suc" || *x == "fai") &&
+                        state.agent < self.num_agents - 1 {
+                        let next_agent_index = team_input.iter().
+                            position(|x| x.agent == state.agent + 1).unwrap();
+                        self.transitions.push(TeamTransition {
+                            from: TeamState {
+                                state: DFAModelCheckingPair { s: state.state.s, q: state.state.q },
+                                agent: state.agent,
+                                task: state.task
+                            },
+                            a: "swi".to_string(),
+                            to: vec![TeamTransitionPair{
+                                state: TeamState {
+                                    state: DFAModelCheckingPair {
+                                        s: team_input[next_agent_index].product.initial.s,
+                                        q: state.state.q
+                                    },
+                                    agent: input.agent + 1,
+                                    task: input.task
+                                },
+                                p: 1.0
+                            }],
+                            reward: vec![0.0; self.num_agents + self.num_tasks]
+                        })
+                    } else if label_pair.w.iter().any(|x| *x == "suc" || *x == "fai") &&
+                        state.agent == self.num_agents - 1 && state.task < self.num_tasks - 1 {
+                        // the switch transition increases the number of tasks and passes it to the
+                        // first agent
+                        let first_agent_index = team_input.iter().
+                            position(|x| x.agent == 0).unwrap();
+                        self.transitions.push(TeamTransition {
+                            from: TeamState {
+                                state: DFAModelCheckingPair { s: state.state.s, q: state.state.q },
+                                agent: state.agent,
+                                task: state.task
+                            },
+                            a: "swi".to_string(),
+                            to: vec![TeamTransitionPair {
+                                state: TeamState {
+                                    state: DFAModelCheckingPair {
+                                        s: team_input[first_agent_index].product.initial.s,
+                                        q: team_input[first_agent_index].product.initial.q
+                                    },
+                                    agent: 0,
+                                    task: state.task + 1
+                                },
+                                p: 0.0
+                            }],
+                            reward: vec![0.0; self.num_agents + self.num_tasks]
+                        })
+                    } else if label_pair.w.iter().any(|x| *x == "suc" || *x == "fai") &&
+                        state.agent == self.num_agents - 1 && state.task == self.num_tasks - 1 {
+                        self.labelling.push(TeamLabelling {
+                            state: TeamState {
+                                state: DFAModelCheckingPair { s: state.state.s, q: state.state.q },
+                                agent: state.agent,
+                                task: state.task
+                            },
+                            label: vec!["done".to_string()]
+                        })
+                    } else if label_pair.w.iter().any(|x| *x == "com") {
+                        self.labelling.push(TeamLabelling {
+                            state: TeamState {
+                                state: DFAModelCheckingPair { s: state.state.s, q: state.state.q },
+                                agent: state.agent,
+                                task: state.task
+                            },
+                            label: vec![format!("com_{}", state.task)]
+                        })
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn assign_task_rewards(&mut self) {
+        for transition in self.transitions.iter_mut() {
+            let task_index = self.num_agents + transition.from.task;
+            //println!("task index: {}", task_index);
+            let transition_copy: TeamTransition = TeamTransition {
+                from: TeamState {
+                    state: DFAModelCheckingPair { s: transition.from.state.s, q: transition.from.state.q },
+                    agent: transition.from.agent,
+                    task: transition.from.task
+                },
+                a: transition.a.to_string(),
+                to: transition.to.to_vec(),
+                reward: transition.reward.to_vec()
+            };
+            for label in self.labelling.iter().
+                filter(|x| x.state.state == transition_copy.from.state) {
+                if label.label.iter().any(|x| *x == format!("com_{}", transition_copy.from.task)) {
+                    transition.reward[task_index] = 1.0;
+                }
+            }
+        }
+    }
+
+    pub fn generate_graph(&self) -> Graph<String, String> {
+        let mut graph: Graph<String, String> = Graph::new();
+        //
+        for state in self.states.iter() {
+            graph.add_node(format!("({},{},{},{})", state.state.s, state.state.q, state.agent, state.task));
+        }
+        for transition in self.transitions.iter() {
+            let origin_index = graph.node_indices().
+                find(|x| graph[*x] ==
+                    format!(
+                        "({},{},{},{})",
+                        transition.from.state.s,
+                        transition.from.state.q,
+                        transition.from.agent,
+                        transition.from.task
+                    )).unwrap();
+            for trans_to in transition.to.iter() {
+                let destination_index = match graph.node_indices().
+                    find(|x| graph[*x] == format!(
+                        "({},{},{},{})",
+                        trans_to.state.state.s,
+                        trans_to.state.state.q,
+                        trans_to.state.agent,
+                        trans_to.state.task
+                    )) {
+                    None => {
+                        println!("Transition {:?}", transition);
+                        panic!("state: ({},{},{},{}) not found",
+                                      trans_to.state.state.s,
+                                      trans_to.state.state.q,
+                                      trans_to.state.agent,
+                                      trans_to.state.task
+                    );}
+                    Some(x) => {x}
+                };
+                graph.add_edge(origin_index, destination_index, transition.a.to_string());
+            }
+        }
+        graph
+    }
+
+    pub fn min_exp_tot(self, team_inputs: &Vec<TeamInput>, w: &Vec<f64>, eps: &f64, debug_max: &u32, verbose: &u32) {
+        // we don't actually have to input a rewards model separately because it is
+        // included as part of the team mdp model
+
+        // first a scheduler function maps the state to an action, the domain of the scheduler
+        // function mu is the entire state space of the team MDP model. A scheduler
+        // function just generates a correspondence between states and actions, therefore,
+        // we can encode it as a vector
+        let action_zip: Vec<Option<String>> = vec![None; self.states.len()];
+        let mut mu: Vec<(TeamState, Option<String>)> = self.states.iter().cloned().
+            zip(action_zip.into_iter()).collect();
+        let weight = arr1(w);
+        let mut counter: u32 = 0;
+
+        let mut xbar: Vec<(f64, TeamState)> = vec![(0.0, TeamState{
+            state: DFAModelCheckingPair { s: 0, q: 0 },
+            agent: 0,
+            task: 0
+        }); self.states.len()];
+
+        let mut ybar: Vec<(f64, TeamState)> = vec![(0.0, TeamState{
+            state: DFAModelCheckingPair { s: 0, q: 0 },
+            agent: 0,
+            task: 0
+        }); self.states.len()];
+
+        let mut xtaskbar: Vec<Vec<(DFAModelCheckingPair,f64)>> =
+            vec![vec![(DFAModelCheckingPair{ s: 0, q: 0 }, 0.0); self.states.len()]; self.num_tasks+self.num_agents];
+        let mut ytaskbar: Vec<Vec<(DFAModelCheckingPair,f64)>> =
+            vec![vec![(DFAModelCheckingPair{ s: 0, q: 0 }, 0.0); self.states.len()]; self.num_tasks+self.num_agents];
+
+        for (k, state) in self.states.iter().enumerate() {
+            xbar[k].1 = TeamState {
+                state: DFAModelCheckingPair { s: state.state.s, q: state.state.q },
+                agent: state.agent,
+                task: state.task
+            };
+            ybar[k].1 = TeamState {
+                state: DFAModelCheckingPair {s: state.state.s, q: state.state.q },
+                agent: state.agent,
+                task: state.task
+            }
+        }
+        println!("Team state len: {}", self.states.len());
+
+        for j in (0..self.num_tasks).rev() {
+            for i in (0..self.num_agents).rev() {
+                //println!("task: {}, agent: {}", j, i);
+                for team_input in team_inputs.iter().
+                    filter(|x| x.task == j && x.agent == i) {
+                    let mut transition_to_state_space: Vec<DFAModelCheckingPair> = team_input.product.states.to_vec();
+                    if j < self.num_tasks - 1 {
+                        //println!("This is not the last task");
+                        if i < self.num_agents - 1 {
+                            //println!("This is not the last agent");
+                            let next_agent_input = team_inputs.iter().
+                                find(|x| x.agent == i + 1 && x.task == j).unwrap();
+                            transition_to_state_space.push(next_agent_input.product.initial.clone());
+                        } else {
+                            //println!("This is the last agent");
+                            let next_agent_input = team_inputs.iter().
+                                find(|x| x.agent == 0 && x.task == j + 1).unwrap();
+                            transition_to_state_space.push(next_agent_input.product.initial.clone())
+                        }
+                    } else {
+                        //println!("This is the last task");
+                        if i < self.num_agents - 1 {
+                            //println!("This is not the last agent");
+                            let next_agent_input = team_inputs.iter().
+                                find(|x| x.agent == i + 1 && x.task == j).unwrap();
+                            transition_to_state_space.push(next_agent_input.product.initial.clone());
+                        }
+                    }
+                    let mut epsilon: f64 = 1.0;
+                    while epsilon > *eps {// && debug_counter < *debug_max {
+                        for s in team_input.product.states.iter() {
+                            //println!("state: {:?}", s);
+                            let mut min_action_values: Vec<(String, f64)> = Vec::new();
+                            for transition in self.transitions.iter().
+                                filter(|x| x.from.agent == i && x.from.task == j && x.from.state == *s) {
+                                //println!("action available: {}", transition.a);
+                                let reward_vect = arr1(&transition.reward);
+                                //println!("rewards: {:?}", transition.reward);
+                                let scalar_weight_rewards = weight.dot(&reward_vect);
+                                let mut sum_vect: Vec<f64> = vec![0.0; transition.to.len()];
+                                for (k2, sprime) in transition.to.iter().enumerate() {
+                                    let x_sprime_index = self.states.iter().
+                                        position(|x| x.state == sprime.state.state &&
+                                            x.agent == sprime.state.agent &&
+                                            x.task == sprime.state.task
+                                        ).unwrap();
+                                    sum_vect[k2] = sprime.p * xbar[x_sprime_index].0;
+                                }
+                                let sum_vect_sum: f64 = sum_vect.iter().sum();
+                                let action_reward = scalar_weight_rewards + sum_vect_sum;
+                                //println!("transition reward: {}", action_reward);
+                                min_action_values.push((transition.a.to_string(), action_reward));
+                            }
+                            let mut v: Vec<_> = min_action_values.iter().
+                                map(|(z, x)| (z, NonNan::new(*x).unwrap())).collect();
+                            v.sort_by_key(|key| key.1);
+                            //println!("sorted values: {:?}", v);
+                            let max_val = v.last().unwrap();
+                            //println!("max value: {}", max_val.1.inner());
+                            let max_pair = v.last().unwrap();
+                            let max_val = max_pair.1.inner();
+                            let argmax = max_pair.0;
+                            let team_state_index = mu.iter().
+                                position(|(t,_a)| t.state == *s && t.agent == i && t.task == j).unwrap();
+                            ybar[team_state_index].0 = max_val;
+                            mu[team_state_index].1 = Some(argmax.to_string());
+                        }
+                        let xbar_val: Vec<f64> = xbar.iter().map(|(x,y)| *x).collect();
+                        let ybar_val: Vec<f64> = ybar.iter().map(|(x,y)| *x).collect();
+                        let ybar_diff = absolute_diff_vect(&xbar_val, &ybar_val);
+                        let mut ybar_diff_max_vect: Vec<NonNan> = ybar_diff.iter().
+                            map(|x| NonNan::new(*x).unwrap()).collect();
+                        ybar_diff_max_vect.sort();
+                        epsilon = ybar_diff_max_vect.last().unwrap().inner();
+                        //println!("eps: {:?}", epsilon);
+                        //println!("ybar: {:?}", ybar);
+                        //println!("xbar: {:?}", xbar);
+                        xbar = ybar.to_vec();
+                    }
+
+                    epsilon = 1.0;
+                    while epsilon > *eps {
+                        for state in team_input.product.states.iter() {
+                            for k in 0..(self.num_tasks + self.num_agents) {
+                                let team_state_index: usize = self.states.iter().
+                                    position(|x| x.state == *state && x.agent == i && x.task == j).unwrap();
+                                let (_t, action) = mu.iter().
+                                    find(|(t,a)| t.state == *state
+                                        && t.agent == i && t.task == j).unwrap();
+                                match action {
+                                    None => {panic!("No action available for state: {:?}", state)}
+                                    Some(a) => {
+
+                                        for transition in self.transitions.iter().
+                                            filter(|x| x.from.state == *state &&
+                                                x.from.agent == i && x.from.task == j &&
+                                                x.a == *a
+                                            ) {
+                                            let mut sum_vect: Vec<f64> = vec![0.0; transition.to.len()];
+                                            for (k2, sprime) in transition.to.iter().enumerate() {
+                                                let x_sprime_index = self.states.iter().
+                                                    position(|x| x.state == sprime.state.state).unwrap();
+                                                sum_vect[k2] = sprime.p * xtaskbar[j][x_sprime_index].1;
+                                            }
+                                            let sum_vect_sum: f64 = sum_vect.iter().sum();
+                                            println!("agent: {}, task: {}, objective: {}, taking action: {} in state: {:?}, costs: {}",
+                                                     i, j, k, a, state, transition.reward[k] + sum_vect_sum);
+                                            ytaskbar[k][team_state_index].0 = DFAModelCheckingPair{ s: state.s, q: state.q };
+                                            ytaskbar[k][team_state_index].1 = transition.reward[k] + sum_vect_sum;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let mut epsilon_inner: f64 = 0.0;
+                        for k in 0..(self.num_agents + self.num_tasks) {
+                            let xtaskbar_vals: Vec<f64> = xtaskbar[k].iter().map(|(t,val)| *val).collect();
+                            let ytaskbar_vals: Vec<f64> = ytaskbar[k].iter().map(|(t, val)| *val).collect();
+                            let ytaskbar_diff = absolute_diff_vect(&xtaskbar_vals, &ytaskbar_vals);
+                            let mut ytaskbar_diff_max_vect: Vec<NonNan> = ytaskbar_diff.iter().
+                                map(|x| NonNan::new(*x).unwrap()).collect();
+                            ytaskbar_diff_max_vect.sort();
+                            let epsilon_val = ytaskbar_diff_max_vect.last().unwrap().inner();
+                            if epsilon_val > epsilon_inner {
+                                epsilon_inner = epsilon_val;
+                            }
+                            println!("epsilon: {}", epsilon_inner);
+                            //println!("ytask_bar for task {} agent {}: {:?}", j, i, ytaskbar[j]);
+                            //println!("xtask_bar for task {} agent {}: {:?}", j, i, xtaskbar[j]);
+                            xtaskbar[k] = ytaskbar[k].to_vec();
+                        }
+                        epsilon = epsilon_inner;
+                    }
+                }
+                if *verbose ==2 {
+                    for (val, t_state) in xbar.iter().
+                        filter(|(v,s)| s.task == 1) {
+                        println!("x value: {}, state: {:?}", val, t_state);
+                    }
+                    for (s,a) in mu.iter() {
+                        match a {
+                            None => {}
+                            Some(v) => {println!("state: {:?}, action: {}", s, v);}
+                        }
+                    }
+                }
+                if *debug_max > 0 {
+                    if counter >= *debug_max {
+                        return
+                    }
+                } else {
+                    return
+                }
+                counter += 1;
+            }
+        }
+    }
+
+    pub fn modify_final_transition(&mut self) {
+        for state in self.labelling.iter().
+            filter(|x| x.label.iter().any(|x| *x == "done")) {
+            self.transitions.push(TeamTransition {
+                from: TeamState {
+                    state: DFAModelCheckingPair { s: state.state.state.s, q: state.state.state.q },
+                    agent: state.state.agent,
+                    task: state.state.task
+                },
+                a: "tau".to_string(),
+                to: vec![TeamTransitionPair {
+                    state: TeamState {
+                        state: DFAModelCheckingPair { s: state.state.state.s, q: state.state.state.q },
+                        agent: state.state.agent,
+                        task: state.state.task
+                    },
+                    p: 1.0
+                }],
+                reward: vec![0.0; self.num_agents + self.num_tasks]
+            })
+        }
+    }
+
+    pub fn default() -> TeamMDP {
+        TeamMDP {
+            states: vec![],
+            transitions: vec![],
+            labelling: vec![],
+            num_agents: 0,
+            num_tasks: 0
+        }
+    }
+
+    //pub fn generate_rewards_model(self, team_input: &Vec<TeamInput>) {}
+}
+
+pub fn absolute_diff_vect(a: &Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
+    let a_b: Vec<_> = a.iter().zip(b.into_iter()).collect();
+    let mut c: Vec<f64> = vec![0.0; a.len()];
+    for (i, (val1,val2)) in a_b.iter().enumerate() {
+        c[i] = (**val1 - **val2).abs();
+    }
+    c
+}
+
 pub fn parse_int(s: &str) -> Result<u32, ParseIntError> {
     s.parse::<u32>()
 }
@@ -709,7 +1527,7 @@ pub fn parse_str_vect(s: &str) -> serde_json::Result<Vec<u32>> {
     Ok(u)
 }
 
-pub fn read_mdp_json<'a, P: AsRef<Path>>(path:P) -> Result<MDP, Box<dyn Error>> {
+pub fn read_mdp_json<'a, P: AsRef<Path>>(path:P) -> Result<Vec<MDP>, Box<dyn Error>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let u = serde_json::from_reader(reader)?;
@@ -721,4 +1539,36 @@ pub fn read_dra_json<'a, P: AsRef<Path>>(path:P) -> Result<Vec<DRA>, Box<dyn Err
     let reader = BufReader::new(file);
     let u = serde_json::from_reader(reader)?;
     Ok(u)
+}
+
+pub fn read_dfa_json<'a, P: AsRef<Path>>(path: P) -> Result<Vec<DFA>, Box<dyn Error>> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let u = serde_json::from_reader(reader)?;
+    Ok(u)
+}
+
+#[derive(PartialOrd, PartialEq, Debug, Clone, Copy)]
+pub struct NonNan(f64);
+
+impl NonNan {
+    pub fn new(val: f64) -> Option<NonNan> {
+        if val.is_nan() {
+            None
+        } else {
+            Some(NonNan(val))
+        }
+    }
+
+    pub fn inner(self) -> f64 {
+        self.0
+    }
+}
+
+impl Eq for NonNan {}
+
+impl Ord for NonNan {
+    fn cmp(&self, other: &NonNan) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
 }
