@@ -272,6 +272,8 @@ fn main() {
         let dot = format!("{}", Dot::new(&tg));
         let mut file = File::create("team_mdp.dot").unwrap();
         file.write_all(&dot.as_bytes());
+        //let team_done_states: Vec<TeamState> = team_mdp.team_done_states();
+        //team_mdp.all_paths(&tg, &team_mdp.initial, &team_done_states);
     }
 
     if run {

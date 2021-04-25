@@ -10,7 +10,7 @@ use std::iter::FromIterator;
 use regex::{Regex};
 use petgraph::{Graph, graph::NodeIndex};
 use std::num::ParseIntError;
-use petgraph::algo::{kosaraju_scc, has_path_connecting};
+use petgraph::algo::{kosaraju_scc, has_path_connecting, all_simple_paths};
 use std::hash::Hash;
 use ndarray::arr1;
 
@@ -1035,6 +1035,21 @@ impl TeamInput {
     }
 }
 
+trait FunctionCaller {
+    fn filter_function(&self, function: &dyn Fn(TeamState, Option<Vec<TeamInput>>) -> bool) -> bool;
+}
+
+struct FilterFunctionCaller {
+    state: TeamState,
+    team_inputs: Option<Vec<TeamInput>>
+}
+
+impl FunctionCaller for FilterFunctionCaller {
+    fn filter_function(&self, function: &dyn Fn(TeamState, Option<Vec<TeamInput>>) -> bool) -> bool {
+        function(self.state.clone(), self.team_inputs.to_vec())
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct TeamState {
     pub state: DFAModelCheckingPair,
@@ -1063,6 +1078,7 @@ pub struct TeamLabelling {
 }
 
 pub struct TeamMDP {
+    pub initial: TeamState,
     pub states: Vec<TeamState>,
     pub transitions: Vec<TeamTransition>,
     pub labelling: Vec<TeamLabelling>,
@@ -1072,6 +1088,11 @@ pub struct TeamMDP {
 
 impl TeamMDP {
     pub fn create_states(&mut self, team_input: &Vec<TeamInput>) {
+        self.initial = TeamState {
+            state: DFAModelCheckingPair {s: team_input[0].product.initial.s, q: team_input[0].product.initial.q},
+            agent: 0,
+            task: 0
+        };
         for task_agent in team_input.iter() {
             for state in task_agent.product.states.iter() {
                 self.states.push(TeamState {
@@ -1109,7 +1130,7 @@ impl TeamMDP {
                     //println!("state label: {:?}", state_label);
                     if state_label.iter().all(|x| *x != "suc" && *x != "fai") {
                         //println!("state: {:?}, agent: {}, task: {} contains no completion labels", state.state, state.agent, state.task);
-                        if transition.reward != 0f64 {
+                        if transition.reward != 0f64 && transition.a != "tau" {
                             rewards[input.agent] = -1.0 * transition.reward;
                         }
                     }
@@ -1296,10 +1317,12 @@ impl TeamMDP {
             task: 0
         }); self.states.len()];
 
-        let mut xtaskbar: Vec<Vec<(DFAModelCheckingPair,f64)>> =
-            vec![vec![(DFAModelCheckingPair{ s: 0, q: 0 }, 0.0); self.states.len()]; self.num_tasks+self.num_agents];
-        let mut ytaskbar: Vec<Vec<(DFAModelCheckingPair,f64)>> =
-            vec![vec![(DFAModelCheckingPair{ s: 0, q: 0 }, 0.0); self.states.len()]; self.num_tasks+self.num_agents];
+        let mut xtaskbar: Vec<Vec<(TeamState,f64)>> =
+            vec![self.states.iter().
+                map(|x| (x.clone(), 0.0)).collect(); self.num_tasks + self.num_agents];
+        let mut ytaskbar: Vec<Vec<(TeamState,f64)>> =
+            vec![self.states.iter().
+                map(|x| (x.clone(), 0.0)).collect(); self.num_tasks + self.num_agents];
 
         for (k, state) in self.states.iter().enumerate() {
             xbar[k].1 = TeamState {
@@ -1318,159 +1341,66 @@ impl TeamMDP {
         for j in (0..self.num_tasks).rev() {
             for i in (0..self.num_agents).rev() {
                 //println!("task: {}, agent: {}", j, i);
-                for team_input in team_inputs.iter().
-                    filter(|x| x.task == j && x.agent == i) {
-                    let mut transition_to_state_space: Vec<DFAModelCheckingPair> = team_input.product.states.to_vec();
-                    if j < self.num_tasks - 1 {
-                        //println!("This is not the last task");
-                        if i < self.num_agents - 1 {
-                            //println!("This is not the last agent");
-                            let next_agent_input = team_inputs.iter().
-                                find(|x| x.agent == i + 1 && x.task == j).unwrap();
-                            transition_to_state_space.push(next_agent_input.product.initial.clone());
-                        } else {
-                            //println!("This is the last agent");
-                            let next_agent_input = team_inputs.iter().
-                                find(|x| x.agent == 0 && x.task == j + 1).unwrap();
-                            transition_to_state_space.push(next_agent_input.product.initial.clone())
+                if j < self.num_tasks - 1 {
+                    let c1 = &move |arg1: TeamState, arg2: Option<Vec<TeamInput>>| {
+                        match arg2 {
+                            None => {(arg1.agent == i && arg1.task == j)}
+                            Some(input) => {
+                                (arg1.agent == i && arg1.task == j) ||
+                                (arg1.agent == i + 1 && arg1.task == j &&
+                                    arg1.state == input.iter().
+                                        find(|x| x.agent == i + 1 && x.task == j).unwrap().product.initial)
+                            }
                         }
+                    };
+                    let c2 = &move |arg1: TeamState, arg2: Option<Vec<TeamInput>>| {
+                        match arg2 {
+                            None => {(arg1.agent == i && arg1.task == j)}
+                            Some(input) => {
+                                (arg1.agent == i && arg1.task == j) ||
+                                    (arg1.agent == 0 && arg1.task == j + 1 &&
+                                        arg1.state == input.iter().
+                                            find(|x| x.agent == 0 && x.task == j + 1).unwrap().product.initial)
+                            }
+                        }
+                    };
+                    let team_iterator = if i < self.num_agents - 1 {
+                        self.states.iter().
+                            filter(|x| &FilterFunctionCaller{ state: **x.clone(), team_inputs: Some(team_inputs.to_vec()) }.filter_function(c1))
                     } else {
-                        //println!("This is the last task");
-                        if i < self.num_agents - 1 {
-                            //println!("This is not the last agent");
-                            let next_agent_input = team_inputs.iter().
-                                find(|x| x.agent == i + 1 && x.task == j).unwrap();
-                            transition_to_state_space.push(next_agent_input.product.initial.clone());
-                        }
-                    }
-                    let mut epsilon: f64 = 1.0;
-                    while epsilon > *eps {// && debug_counter < *debug_max {
-                        for s in team_input.product.states.iter() {
-                            //println!("state: {:?}", s);
-                            let mut min_action_values: Vec<(String, f64)> = Vec::new();
-                            for transition in self.transitions.iter().
-                                filter(|x| x.from.agent == i && x.from.task == j && x.from.state == *s) {
-                                //println!("action available: {}", transition.a);
-                                let reward_vect = arr1(&transition.reward);
-                                //println!("rewards: {:?}", transition.reward);
-                                let scalar_weight_rewards = weight.dot(&reward_vect);
-                                let mut sum_vect: Vec<f64> = vec![0.0; transition.to.len()];
-                                for (k2, sprime) in transition.to.iter().enumerate() {
-                                    let x_sprime_index = self.states.iter().
-                                        position(|x| x.state == sprime.state.state &&
-                                            x.agent == sprime.state.agent &&
-                                            x.task == sprime.state.task
-                                        ).unwrap();
-                                    sum_vect[k2] = sprime.p * xbar[x_sprime_index].0;
-                                }
-                                let sum_vect_sum: f64 = sum_vect.iter().sum();
-                                let action_reward = scalar_weight_rewards + sum_vect_sum;
-                                //println!("transition reward: {}", action_reward);
-                                min_action_values.push((transition.a.to_string(), action_reward));
-                            }
-                            let mut v: Vec<_> = min_action_values.iter().
-                                map(|(z, x)| (z, NonNan::new(*x).unwrap())).collect();
-                            v.sort_by_key(|key| key.1);
-                            //println!("sorted values: {:?}", v);
-                            let max_val = v.last().unwrap();
-                            //println!("max value: {}", max_val.1.inner());
-                            let max_pair = v.last().unwrap();
-                            let max_val = max_pair.1.inner();
-                            let argmax = max_pair.0;
-                            let team_state_index = mu.iter().
-                                position(|(t,_a)| t.state == *s && t.agent == i && t.task == j).unwrap();
-                            ybar[team_state_index].0 = max_val;
-                            mu[team_state_index].1 = Some(argmax.to_string());
-                        }
-                        let xbar_val: Vec<f64> = xbar.iter().map(|(x,y)| *x).collect();
-                        let ybar_val: Vec<f64> = ybar.iter().map(|(x,y)| *x).collect();
-                        let ybar_diff = absolute_diff_vect(&xbar_val, &ybar_val);
-                        let mut ybar_diff_max_vect: Vec<NonNan> = ybar_diff.iter().
-                            map(|x| NonNan::new(*x).unwrap()).collect();
-                        ybar_diff_max_vect.sort();
-                        epsilon = ybar_diff_max_vect.last().unwrap().inner();
-                        //println!("eps: {:?}", epsilon);
-                        //println!("ybar: {:?}", ybar);
-                        //println!("xbar: {:?}", xbar);
-                        xbar = ybar.to_vec();
-                    }
-
-                    epsilon = 1.0;
-                    while epsilon > *eps {
-                        for state in team_input.product.states.iter() {
-                            for k in 0..(self.num_tasks + self.num_agents) {
-                                let team_state_index: usize = self.states.iter().
-                                    position(|x| x.state == *state && x.agent == i && x.task == j).unwrap();
-                                let (_t, action) = mu.iter().
-                                    find(|(t,a)| t.state == *state
-                                        && t.agent == i && t.task == j).unwrap();
-                                match action {
-                                    None => {panic!("No action available for state: {:?}", state)}
-                                    Some(a) => {
-
-                                        for transition in self.transitions.iter().
-                                            filter(|x| x.from.state == *state &&
-                                                x.from.agent == i && x.from.task == j &&
-                                                x.a == *a
-                                            ) {
-                                            let mut sum_vect: Vec<f64> = vec![0.0; transition.to.len()];
-                                            for (k2, sprime) in transition.to.iter().enumerate() {
-                                                let x_sprime_index = self.states.iter().
-                                                    position(|x| x.state == sprime.state.state).unwrap();
-                                                sum_vect[k2] = sprime.p * xtaskbar[j][x_sprime_index].1;
-                                            }
-                                            let sum_vect_sum: f64 = sum_vect.iter().sum();
-                                            println!("agent: {}, task: {}, objective: {}, taking action: {} in state: {:?}, costs: {}",
-                                                     i, j, k, a, state, transition.reward[k] + sum_vect_sum);
-                                            ytaskbar[k][team_state_index].0 = DFAModelCheckingPair{ s: state.s, q: state.q };
-                                            ytaskbar[k][team_state_index].1 = transition.reward[k] + sum_vect_sum;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        let mut epsilon_inner: f64 = 0.0;
-                        for k in 0..(self.num_agents + self.num_tasks) {
-                            let xtaskbar_vals: Vec<f64> = xtaskbar[k].iter().map(|(t,val)| *val).collect();
-                            let ytaskbar_vals: Vec<f64> = ytaskbar[k].iter().map(|(t, val)| *val).collect();
-                            let ytaskbar_diff = absolute_diff_vect(&xtaskbar_vals, &ytaskbar_vals);
-                            let mut ytaskbar_diff_max_vect: Vec<NonNan> = ytaskbar_diff.iter().
-                                map(|x| NonNan::new(*x).unwrap()).collect();
-                            ytaskbar_diff_max_vect.sort();
-                            let epsilon_val = ytaskbar_diff_max_vect.last().unwrap().inner();
-                            if epsilon_val > epsilon_inner {
-                                epsilon_inner = epsilon_val;
-                            }
-                            println!("epsilon: {}", epsilon_inner);
-                            //println!("ytask_bar for task {} agent {}: {:?}", j, i, ytaskbar[j]);
-                            //println!("xtask_bar for task {} agent {}: {:?}", j, i, xtaskbar[j]);
-                            xtaskbar[k] = ytaskbar[k].to_vec();
-                        }
-                        epsilon = epsilon_inner;
-                    }
+                        self.states.iter().
+                            filter(|x| &FilterFunctionCaller{ state: **x.clone(), team_inputs: Some(team_inputs.to_vec()) }.filter_function(c2))
+                    };
                 }
-                if *verbose ==2 {
-                    for (val, t_state) in xbar.iter().
-                        filter(|(v,s)| s.task == 1) {
-                        println!("x value: {}, state: {:?}", val, t_state);
-                    }
-                    for (s,a) in mu.iter() {
-                        match a {
-                            None => {}
-                            Some(v) => {println!("state: {:?}, action: {}", s, v);}
-                        }
-                    }
+                for team_state in team_iterator {
+                    println!("agent: {}, task: {}, state: {:?}", i, j, team_state);
                 }
-                if *debug_max > 0 {
-                    if counter >= *debug_max {
-                        return
-                    }
-                } else {
+
+
+            }
+
+            if *debug_max > 0 {
+                if counter >= *debug_max {
                     return
                 }
-                counter += 1;
+            } else {
+                return
             }
+            counter += 1;
         }
+        /*
+        for k in [0usize,1usize,2usize,3usize].iter() {
+            //println!("objective: {}", k);
+            let initial_state_index: usize = self.states.iter().position(|x| *x == self.initial).unwrap();
+            /*for (s, val) in ytaskbar[*k].iter() {
+                println!("state: ({},{},{},{}), val: {}", s.state.s, s.state.q, s.agent, s.task, val);
+            }
+             */
+            println!("Total expected cost of obj: {}, from {:?} is {}", k, ytaskbar[*k][initial_state_index].0, ytaskbar[*k][initial_state_index].1);
+            println!("{:?}", ytaskbar[*k])
+        }
+
+         */
     }
 
     pub fn modify_final_transition(&mut self) {
@@ -1496,8 +1426,23 @@ impl TeamMDP {
         }
     }
 
+    pub fn team_done_states(&self) -> Vec<TeamState> {
+        let mut done_states: Vec<TeamState> = Vec::new();
+        for state in self.states.iter().
+            filter(|x| self.labelling.iter().any(|x| x.state == x.state &&
+                x.label.iter().any(|y| *y == "done"))) {
+            done_states.push(state.clone())
+        }
+        done_states
+    }
+
     pub fn default() -> TeamMDP {
         TeamMDP {
+            initial: TeamState {
+                state: DFAModelCheckingPair { s: 0, q: 0 },
+                agent: 0,
+                task: 0
+            },
             states: vec![],
             transitions: vec![],
             labelling: vec![],
