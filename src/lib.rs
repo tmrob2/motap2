@@ -6,7 +6,8 @@ use std::error::Error;
 use std::fs::File;
 use serde::Deserialize;
 //use petgraph::data::ElementIterator;
-use std::iter::FromIterator;
+use std::slice::Iter;
+use std::iter::{FromIterator, Filter};
 use regex::{Regex};
 use petgraph::{Graph, graph::NodeIndex};
 use std::num::ParseIntError;
@@ -1035,19 +1036,8 @@ impl TeamInput {
     }
 }
 
-trait FunctionCaller {
-    fn filter_function(&self, function: &dyn Fn(TeamState, Option<Vec<TeamInput>>) -> bool) -> bool;
-}
-
-struct FilterFunctionCaller {
-    state: TeamState,
-    team_inputs: Option<Vec<TeamInput>>
-}
-
-impl FunctionCaller for FilterFunctionCaller {
-    fn filter_function(&self, function: &dyn Fn(TeamState, Option<Vec<TeamInput>>) -> bool) -> bool {
-        function(self.state.clone(), self.team_inputs.to_vec())
-    }
+fn filter_states<'a>(input: &'a [TeamState], i: &'a usize, j: &'a usize) -> impl Iterator<Item = &'a TeamState> {
+    input.iter().filter(move |x| x.agent == *i && x.task == *j)
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -1342,40 +1332,10 @@ impl TeamMDP {
             for i in (0..self.num_agents).rev() {
                 //println!("task: {}, agent: {}", j, i);
                 if j < self.num_tasks - 1 {
-                    let c1 = &move |arg1: TeamState, arg2: Option<Vec<TeamInput>>| {
-                        match arg2 {
-                            None => {(arg1.agent == i && arg1.task == j)}
-                            Some(input) => {
-                                (arg1.agent == i && arg1.task == j) ||
-                                (arg1.agent == i + 1 && arg1.task == j &&
-                                    arg1.state == input.iter().
-                                        find(|x| x.agent == i + 1 && x.task == j).unwrap().product.initial)
-                            }
-                        }
-                    };
-                    let c2 = &move |arg1: TeamState, arg2: Option<Vec<TeamInput>>| {
-                        match arg2 {
-                            None => {(arg1.agent == i && arg1.task == j)}
-                            Some(input) => {
-                                (arg1.agent == i && arg1.task == j) ||
-                                    (arg1.agent == 0 && arg1.task == j + 1 &&
-                                        arg1.state == input.iter().
-                                            find(|x| x.agent == 0 && x.task == j + 1).unwrap().product.initial)
-                            }
-                        }
-                    };
-                    let team_iterator = if i < self.num_agents - 1 {
-                        self.states.iter().
-                            filter(|x| &FilterFunctionCaller{ state: **x.clone(), team_inputs: Some(team_inputs.to_vec()) }.filter_function(c1))
-                    } else {
-                        self.states.iter().
-                            filter(|x| &FilterFunctionCaller{ state: **x.clone(), team_inputs: Some(team_inputs.to_vec()) }.filter_function(c2))
-                    };
+                    for team_state in filter_states(&self.states, &i, &j) {
+                        println!("agent: {}, task: {}, state: {:?}", i, j, team_state);
+                    }
                 }
-                for team_state in team_iterator {
-                    println!("agent: {}, task: {}, state: {:?}", i, j, team_state);
-                }
-
 
             }
 
