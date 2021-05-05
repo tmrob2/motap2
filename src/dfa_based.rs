@@ -1,6 +1,8 @@
 //use itertools::{Itertools, enumerate};
-use clap::clap_app;
-use lib::{read_mdp_json, MDP, DFA, DFAProductMDP, read_dfa_json, DFAModelCheckingPair, TeamState, TeamInput, TeamMDP, NonNan, absolute_diff_vect};
+use clap::{clap_app, Values};
+use lib::{read_mdp_json, MDP, DFA, DFAProductMDP,
+          read_dfa_json, DFAModelCheckingPair, TeamInput,
+          TeamMDP, NonNan, absolute_diff_vect, read_target, Target};
 use std::fs::File;
 use std::io::Write;
 use petgraph::{dot::Dot};
@@ -52,23 +54,24 @@ fn main() {
               ]
             }
            ")
-           (@arg VERBOSE: -v --verbose [VERBOSITY] default_value("0") "Level of verbosity \
-           0 - errors\
-           1 - inputs
-           2 - algorithm debugging
-           3 - results
-           ")
-           (@arg TEST: -t --test "test some code")
-           (@arg LABEL: -l --label "present the labelling of a product MDP")
-           (@arg GRAPH: -g --graph [GRAPH_TYPE] default_value("0") "generates a product graph type: \
-           1 - Product Graph
-           2 - Modified Product Graph
-           3 - Team MDP Graph
-           4 - All of the above
-           ")
+            (@arg TARGET: --target <PATH_REF3> "Input of the target vector")
+            (@arg VERBOSE: -v --verbose [VERBOSITY] default_value("0") "Level of verbosity \
+               0 - errors\
+               1 - inputs
+               2 - algorithm debugging
+               3 - results
+               "
+            )
+            (@arg TEST: -t --test "test some code")
+            (@arg LABEL: -l --label "present the labelling of a product MDP")
+            (@arg GRAPH: -g --graph [GRAPH_TYPE] default_value("0") "generates a product graph type: \
+               1 - Product Graph
+               2 - Modified Product Graph
+               3 - Team MDP Graph
+               4 - All of the above
+               "
+            )
             (@arg RUN: -r --run "run task allocation and planning in a team MDP")
-            (@arg DEBUG_LOOP_MAX: --debug_max [DEBUG_MAX] default_value("0")
-                "the number of loops allowed in a while loop in calculating the expected total returns")
             (@arg EPS: --eps [EPSILON] default_value("0.005"))
         )
     ).get_matches();
@@ -100,24 +103,8 @@ fn main() {
         (_,_) => 0
     };
 
-    let debug_max_loops: u32 = match matches.subcommand() {
-        ("motap", Some(f)) => {
-            f.value_of("DEBUG_LOOP_MAX").unwrap().parse().unwrap()
-        },
-        (_,_) => 0
-    };
-
     // If block used for testing certain inputs with the motap CLI
     if test {
-        let vbar: Vec<f64> = vec![2.0, 1.0, 3.0];
-        let mut v: Vec<_> = vbar.iter().map(|x| NonNan::new(*x).unwrap()).collect();
-        v.sort();
-        println!("min of vbar:{:?} is {:?}", &vbar, &v[0].inner());
-
-        let a: Vec<f64> = vec![0.1, 2.3, 4.3];
-        let b: Vec<f64> = vec![0.4, -1.0, 3.3];
-        let c = absolute_diff_vect(&a, &b);
-        println!("{:?}", c);
     }
 
     let verbose: u32 = match matches.subcommand() {
@@ -157,11 +144,25 @@ fn main() {
         Err(e) => {println!("Error: {}", e); None}
     };
 
+    let target_path = match matches.subcommand() {
+        ("motap", Some(f)) => {
+            f.value_of("TARGET").unwrap()
+        }
+        (_,_) => {""}
+    };
+
     let dfas: Option<Vec<DFA>> = match read_dfa_json(dra_path_val) {
         Ok(u) => {
             if verbose == 1 {
                 println!("{:?}", u);
             }
+            Some(u)
+        },
+        Err(e) => {println!("Error: {}", e); None}
+    };
+
+    let targets: Option<Target> = match read_target(target_path) {
+        Ok(u) => {
             Some(u)
         },
         Err(e) => {println!("Error: {}", e); None}
@@ -187,6 +188,7 @@ fn main() {
     //let safety_present: bool = false;
     let mut dfa_parse: Vec<(usize, DFA)> = Vec::new();
     let mut mdp_parse: Vec<(usize, MDP)> = Vec::new();
+    let mut target_parse: Vec<f64> = Vec::new();
     let mut num_agents: usize = 0;
     let mut num_tasks: usize = 0;
     match dfas {
@@ -207,6 +209,13 @@ fn main() {
         },
         None => {println!("There was an error reading the mdp from {}", mdp_path_val); return }
     }
+    match targets {
+        None => {println!("There was an error reading the targets from {}", target_path)},
+        Some(z) => {
+            target_parse = z.target;
+        }
+    }
+    println!("target: {:?}", target_parse);
     let mut team_input: Vec<TeamInput> = vec![TeamInput::default(); num_tasks * num_agents];
     let mut team_counter: usize = 0;
     for (i, mdp) in mdp_parse.iter() {
@@ -216,7 +225,8 @@ fn main() {
             local_product.create_transitions(&mdp, task);
             let mut g = local_product.generate_graph();
             let initially_reachable = local_product.reachable_from_initial(&g);
-            let (prune_states_indices, prune_states) : (Vec<usize>, Vec<DFAModelCheckingPair>) = local_product.prune_candidates(&initially_reachable);
+            let (prune_states_indices, prune_states) : (Vec<usize>, Vec<DFAModelCheckingPair>) =
+                local_product.prune_candidates(&initially_reachable);
             if graph_type > 0 {
                 local_product.prune_graph(&mut g, &prune_states_indices);
                 let dot = format!("{}", Dot::new(&g));
@@ -228,6 +238,7 @@ fn main() {
             local_product.modify_complete(task);
             //println!("modifying agent: {} task: {}", i, j);
             local_product.edit_labelling(task, &mdp);
+            //local_product.modify_rewards(task);
             if graph_type > 0 {
                 let g = local_product.generate_graph();
                 let dot = format!("{}", Dot::new(&g));
@@ -247,7 +258,9 @@ fn main() {
             team_input[team_counter] = TeamInput {
                 agent: *i,
                 task: *j,
-                product: local_product
+                product: local_product,
+                dead: task.dead.to_vec(),
+                acc: task.acc.to_vec()
             };
             team_counter += 1;
         }
@@ -256,15 +269,18 @@ fn main() {
     team_mdp.num_agents = num_agents;
     team_mdp.num_tasks = num_tasks;
     team_mdp.create_states(&team_input);
+    if verbose == 2 {
+        for state in team_mdp.states.iter() {
+            println!("team state: ({},{},{},{})", state.state.s, state.state.q, state.agent, state.task);
+        }
+    }
     team_mdp.create_transitions_and_labelling(&team_input);
     team_mdp.assign_task_rewards();
-    team_mdp.modify_final_transition();
+    team_mdp.modify_final_rewards(&team_input);
     if verbose == 2 {
-        for transition in team_mdp.transitions.iter().
-            filter(|x| team_mdp.labelling.iter().
-                any(|y| y.label.iter().any(|z| *z == "done")
-                    && y.state.state == x.from.state) && x.a == "tau") {
-            println!("mission complete transitions: {:?}", transition);
+        for transition in team_mdp.transitions.iter() {
+            println!("state: ({},{},{},{}), rewards: {:?}", transition.from.state.s, transition.from.state.q,
+            transition.from.agent, transition.from.task, transition.reward);
         }
     }
     if graph_type > 0 {
@@ -277,8 +293,9 @@ fn main() {
     }
 
     if run {
-        let w = vec![0.25,0.25,0.25,0.25];
-        team_mdp.min_exp_tot(&team_input, &w, &epsilon, &debug_max_loops, &verbose);
+        //let w: Vec<f64> = vec![0.0, 0.0, 1.0, 0.0, 0.0];
+        //let safe_r = team_mdp.min_exp_tot(&w, &epsilon);
+        let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon);
     }
 }
 

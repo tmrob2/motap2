@@ -11,11 +11,11 @@
       "s": 1,
       "a": "a",
       "s_prime": [{"s": 2, "p": 1.0}],
-      "rewards": 0.0
+      "rewards": 1.0
     },{
       "s": 2,
       "a": "a",
-      "s_prime": [{"s": 3, "p": 0.3}, {"s": 4, "p": 0.7}],
+      "s_prime": [{"s": 3, "p": 0.8}, {"s": 4, "p": 0.2}],
       "rewards": 2.0
     },{
       "s": 2,
@@ -26,12 +26,12 @@
       "s": 3,
       "a": "a",
       "s_prime": [{"s": 2, "p": 1.0}],
-      "rewards": 0.0
+      "rewards": 1.0
     },{
       "s": 4,
       "a": "a",
       "s_prime": [{"s": 0, "p": 1.0}],
-      "rewards": 0.0
+      "rewards": 1.0
     }
   ],
   "labelling": [
@@ -48,33 +48,33 @@
     {
       "s": 0,
       "a": "a",
-      "s_prime": [{"s": 0,"p": 0.1}, {"s": 1, "p": 0.9}],
+      "s_prime": [{"s": 0,"p": 0.7}, {"s": 1, "p": 0.3}],
       "rewards": 1.0
     },{
       "s": 1,
       "a": "a",
       "s_prime": [{"s": 2, "p": 1.0}],
-      "rewards": 0.0
+      "rewards": 1.0
     },{
       "s": 2,
       "a": "a",
-      "s_prime": [{"s": 3, "p": 0.2}, {"s": 4, "p": 0.8}],
-      "rewards": 2.0
+      "s_prime": [{"s": 3, "p": 0.8}, {"s": 4, "p": 0.2}],
+      "rewards": 1.0
     },{
       "s": 2,
       "a": "b",
       "s_prime": [{"s": 4, "p": 1.0}],
-      "rewards": 1.0
+      "rewards": 2.0
     },{
       "s": 3,
       "a": "a",
       "s_prime": [{"s": 2, "p": 1.0}],
-      "rewards": 0.0
+      "rewards": 1.0
     },{
       "s": 4,
       "a": "a",
       "s_prime": [{"s": 0, "p": 1.0}],
-      "rewards": 0.0
+      "rewards": 1.0
     }
   ],
   "labelling": [
