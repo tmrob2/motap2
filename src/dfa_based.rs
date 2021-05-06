@@ -1,8 +1,6 @@
 //use itertools::{Itertools, enumerate};
 use clap::{clap_app, Values};
-use lib::{read_mdp_json, MDP, DFA, DFAProductMDP,
-          read_dfa_json, DFAModelCheckingPair, TeamInput,
-          TeamMDP, NonNan, absolute_diff_vect, read_target, Target};
+use lib::{read_mdp_json, MDP, DFA, DFAProductMDP, read_dfa_json, DFAModelCheckingPair, TeamInput, TeamMDP, NonNan, absolute_diff_vect, read_target, Target, lp3, lp4};
 use std::fs::File;
 use std::io::Write;
 use petgraph::{dot::Dot};
@@ -105,6 +103,16 @@ fn main() {
 
     // If block used for testing certain inputs with the motap CLI
     if test {
+        lp3();
+        let target: Vec<f64> = vec![-7.0, -7.0, 0.5, 0.5];
+        let hullset: Vec<Vec<f64>> = vec![
+            vec![-8.5, 0.0, 0.0, 0.0],
+            vec![0.0, -13.66, 0.0, 0.0],
+            vec![-6.85, -6.33, 0.8, 0.0],
+            vec![-13.18, 0.0, 0.0, 0.64]
+        ];
+        let result = lp4(&hullset, &target, &4usize);
+        println!("result: {:?}", result);
     }
 
     let verbose: u32 = match matches.subcommand() {
@@ -296,6 +304,7 @@ fn main() {
         //let w: Vec<f64> = vec![0.0, 0.0, 1.0, 0.0, 0.0];
         //let safe_r = team_mdp.min_exp_tot(&w, &epsilon);
         let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon);
+
     }
 }
 

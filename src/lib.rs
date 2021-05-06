@@ -1,3 +1,4 @@
+extern crate serde_json;
 use std::collections::{HashSet, VecDeque, HashMap};
 use itertools::Itertools;
 use std::io::BufReader;
@@ -14,11 +15,11 @@ use std::num::ParseIntError;
 use petgraph::algo::{kosaraju_scc, has_path_connecting, all_simple_paths};
 use std::hash::Hash;
 use ndarray::arr1;
-use minilp::{Problem, OptimizationDirection, ComparisonOp, Variable, LinearExpr};
-use std::env::var;
+//use minilp::{Problem, OptimizationDirection, ComparisonOp, Variable, LinearExpr};
+use lp_modeler::dsl::*;
+use lp_modeler::solvers::{SolverTrait, CbcSolver, Solution, NativeCbcSolver};
 
 //use lazy_static::lazy_static;
-extern crate serde_json;
 
 #[derive(Debug, Deserialize)]
 pub struct Target {
@@ -1624,7 +1625,7 @@ impl TeamMDP {
         for k in 0..(self.num_agents + self.num_tasks) {
             extreme_points[k][k] = 1.0;
             let w_extr: &Vec<f64> = &extreme_points[k];
-            //println!("w: {:?}", w_extr);
+            println!("w: {:?}", w_extr);
             let safe_ret = self.min_exp_tot(&w_extr, eps);
             match safe_ret {
                 Some((mu_new, r)) => {
@@ -1633,7 +1634,7 @@ impl TeamMDP {
                 None => panic!("No value was returned from the maximisation")
             }
         }
-        /*println!("extreme points: ");
+        println!("extreme points: ");
         for k in hullset.iter() {
             print!("p: [");
             for (i, j) in k.iter().enumerate() {
@@ -1646,13 +1647,11 @@ impl TeamMDP {
             print!("]");
             println!();
         }
-
-         */
         let mut member_closure: bool = false;
         let dim = self.num_tasks + self.num_agents;
         let t_arr1 = arr1(target);
         while !member_closure {
-            let w_new = lp2(&hullset, target, &dim);
+            let w_new = lp4(&hullset, target, &dim);
             let safe_ret = self.min_exp_tot(&w_new, eps);
             match safe_ret {
                 Some((mu_new, r)) => {
@@ -1681,6 +1680,7 @@ impl TeamMDP {
 
 }
 
+/*
 /// Linear programming test function. Simple implementation of two tasks, to two agents
 pub fn pareto_lp_delta() {
 
@@ -1703,6 +1703,112 @@ pub fn pareto_lp_delta() {
     println!("solution => a1: {:?}, a2: {:?}, a3: {:?}, a4: {:?}", sol[a1], sol[a2], sol[a3], sol[a4]);
 }
 
+ */
+
+pub fn lp3() {
+
+    let mut problem = LpProblem::new("test", LpObjective::Maximize);
+    let objective: HashMap<&str, f32> = vec![
+        ("a1", 0.0),
+        ("a2", 0.0),
+        ("a3", 0.0),
+        ("a4", 0.0),
+        ("delta", 1.0)
+    ].into_iter().collect();
+
+    let x: HashMap<&str, LpContinuous> = objective.iter().
+        map(|(k, v)| if k.chars().next().unwrap().to_string() == "a".to_string() {
+            (*k, LpContinuous{
+                name: k.to_string(),
+                lower_bound: Some(0.0),
+                upper_bound: Some(1.0)
+            })
+        } else {
+            (*k, LpContinuous::new("delta"))
+        }).collect();
+
+    problem += &x["delta"];
+    problem += (-7.0 * &x["a1"] -7.0 * &x["a2"] + 0.5 * &x["a3"] + 0.5 * &x["a4"] + 1.0 * &x["delta"]).ge(0.01);
+    problem += (-8.5 * &x["a1"] + 1.0 * &x["delta"]).le(0.0);
+    problem += (-13.66 * &x["a2"] + 1.0 * &x["delta"]).le(0.0);
+    problem += (-6.85 * &x["a1"] -6.33 * &x["a2"] + 0.8 * &x["a3"] + 1.0 * &x["delta"]).le(0.0);
+    problem += (-13.18 * &x["a1"] + 0.64 * &x["a4"] + 1.0 * &x["delta"]).le(0.0);
+    problem += (&x["a1"] + &x["a2"] + &x["a3"] + &x["a4"]).equal(1.0);
+
+
+    let solver = NativeCbcSolver::new();
+
+    match solver.run(&problem) {
+        Ok(sol) => {
+            //println!("Status {:?}", sol.status);
+            //println!("{:?}", sol.results);
+        }
+        Err(msg) => panic!("Native Cbc Solver panicked at run: {}", msg),
+    }
+}
+
+pub fn lp4(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
+    let mut problem = LpProblem::new("test", LpObjective::Maximize);
+    let mut objective: HashMap<String, f32> = HashMap::new();
+    for k in 0..*dim{
+        objective.insert(format!("w{}", k + 1), 0.0);
+    }
+    objective.insert("delta".to_string(), 1.0);
+
+    let x: HashMap<String, LpContinuous> = objective.iter().
+        map(|(k, v)| if k.chars().next().unwrap().to_string() == "w".to_string() {
+            (k.to_string(), LpContinuous{
+                name: k.to_string(),
+                lower_bound: Some(0.0),
+                upper_bound: Some(1.0)
+            })
+        } else {
+            (k.to_string(), LpContinuous::new("delta"))
+        }).collect();
+
+    problem += &x["delta"];
+    // Create the target constraint
+    //println!("hashmap obj: {:?}", x);
+    let mut const_vec = Vec::new();
+    for (k, j) in t.iter().enumerate() {
+        //println!("getting: {:?}", format!("a{}", k + 1));
+        const_vec.push((*j as f32) * x.get(&format!("w{}", k + 1)).unwrap());
+    }
+    const_vec.push(1.0 * &x["delta"]);
+    problem += lp_sum(&const_vec).ge(0.0);
+
+    // create the hullset constraints
+    for i in h.iter() {
+        const_vec = Vec::new();
+        for (k, j) in i.iter().enumerate() {
+            const_vec.push((*j as f32) * x.get(&format!("w{}", k + 1)).unwrap());
+        }
+        const_vec.push(1.0 * &x["delta"]);
+        problem += lp_sum(&const_vec).le(0.0);
+    }
+
+    const_vec = Vec::new();
+    for (k, _j) in t.iter().enumerate() {
+        const_vec.push(1.0 * x.get(&format!("w{}", k + 1)).unwrap());
+    }
+    problem += lp_sum(&const_vec).equal(1.0);
+
+    let solver = NativeCbcSolver::new();
+
+    match solver.run(&problem) {
+        Ok(sol) => {
+            //println!("Status {:?}", sol.status);
+            let mut result: Vec<f64> = vec![0.0; h[0].len()];
+            for j in 0..*dim {
+                result[j] = ((*sol.results.get(&format!("w{}", j + 1)).unwrap() as f64 * 100000.0).round()/100000.0);
+            }
+            result
+        }
+        Err(msg) => panic!("Native Cbc Solver panicked at run: {}", msg),
+    }
+}
+
+/*
 pub fn lp2(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
     let mut problem = Problem::new(OptimizationDirection::Maximize);
 
@@ -1755,6 +1861,8 @@ pub fn lp2(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
     }
     result
 }
+
+ */
 
 /*
 pub fn pareto_lp(h: &Vec<Vec<f64>>, k: &Vec<Vec<f64>>, dim: &u32) -> Vec<f64> {
