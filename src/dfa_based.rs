@@ -1,6 +1,6 @@
 //use itertools::{Itertools, enumerate};
 use clap::{clap_app, Values};
-use lib::{read_mdp_json, MDP, DFA, DFAProductMDP, read_dfa_json, DFAModelCheckingPair, TeamInput, TeamMDP, NonNan, absolute_diff_vect, read_target, Target, lp3, lp4};
+use lib::{read_mdp_json, MDP, DFA, DFAProductMDP, read_dfa_json, DFAModelCheckingPair, TeamInput, TeamMDP, NonNan, absolute_diff_vect, read_target, Target, lp3, lp4, Mu};
 use std::fs::File;
 use std::io::Write;
 use petgraph::{dot::Dot};
@@ -103,7 +103,7 @@ fn main() {
 
     // If block used for testing certain inputs with the motap CLI
     if test {
-        lp3();
+        //lp3();
         let target: Vec<f64> = vec![-7.0, -7.0, 0.5, 0.5];
         let hullset: Vec<Vec<f64>> = vec![
             vec![-8.5, 0.0, 0.0, 0.0],
@@ -301,10 +301,28 @@ fn main() {
     }
 
     if run {
-        //let w: Vec<f64> = vec![0.0, 0.0, 1.0, 0.0, 0.0];
-        //let safe_r = team_mdp.min_exp_tot(&w, &epsilon);
-        let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon);
-
+        // TODO there is still an issue where the agent cost is not reflecting
+        //  what is happening in the scheduler, or not expected in what is
+        //  happening in the scheduler
+        let w: Vec<f64> = vec![0., 0., 0.1, 0.2, 0.2];
+        let safe_r = team_mdp.min_exp_tot(&w, &epsilon);
+        match safe_r {
+            None => {}
+            Some((mu, r)) => {
+                for s in mu.iter() {
+                    println!(
+                        "state: ({},{},{},{}), action: {:?}",
+                        s.team_state.state.s,
+                        s.team_state.state.q,
+                        s.team_state.agent,
+                        s.team_state.task,
+                        s.action
+                    );
+                }
+                println!("r: {:?}", r);
+            }
+        }
+        //let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon);
     }
 }
 

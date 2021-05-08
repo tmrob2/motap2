@@ -17,7 +17,7 @@ use std::hash::Hash;
 use ndarray::arr1;
 //use minilp::{Problem, OptimizationDirection, ComparisonOp, Variable, LinearExpr};
 use lp_modeler::dsl::*;
-use lp_modeler::solvers::{SolverTrait, CbcSolver, Solution, NativeCbcSolver};
+use lp_modeler::solvers::{SolverTrait, CbcSolver, Solution, NativeCbcSolver, GurobiSolver};
 
 //use lazy_static::lazy_static;
 
@@ -1114,10 +1114,10 @@ pub struct TeamLabelling {
 
 #[derive(Debug, Clone)]
 pub struct Mu {
-    team_state: TeamState,
-    action: Option<String>,
-    task_local_index: usize,
-    agent_local_index: usize
+    pub team_state: TeamState,
+    pub action: Option<String>,
+    pub task_local_index: usize,
+    pub agent_local_index: usize
 }
 
 impl Mu {
@@ -1157,7 +1157,7 @@ impl TeamInitState {
 }
 
 pub struct TeamMDP {
-    pub initial: Vec<TeamInitState>,
+    pub initial: TeamState,
     pub states: Vec<TeamState>,
     pub transitions: Vec<TeamTransition>,
     pub labelling: Vec<TeamLabelling>,
@@ -1168,7 +1168,6 @@ pub struct TeamMDP {
 impl TeamMDP {
     pub fn create_states(&mut self, team_input: &Vec<TeamInput>) {
 
-        let mut initial: Vec<TeamInitState> = vec![TeamInitState::default(); self.num_agents + self.num_tasks];
         for task_agent in team_input.iter() {
             for state in task_agent.product.states.iter() {
                 self.states.push(TeamState {
@@ -1179,8 +1178,9 @@ impl TeamMDP {
             }
         }
 
+        /*
         for k in 0..self.num_agents {
-
+            //for j in 0..self.num_tasks {
             let init_local_state = team_input.iter().
                 find(|x| x.agent == k && x.task == 0).unwrap().product.initial.clone();
             let init_state = TeamState {
@@ -1189,11 +1189,12 @@ impl TeamMDP {
                 task: 0
             };
             let init_state_index: usize = self.states.iter().position(|x| *x == init_state).unwrap();
-            initial[k] = TeamInitState {
+            initial.push(TeamInitState {
                 state: init_state,
                 index: init_state_index,
                 obj_index: k
-            };
+            });
+            //}
         }
 
         for k in 0..self.num_tasks {
@@ -1205,13 +1206,19 @@ impl TeamMDP {
                 task: k
             };
             let init_state_index: usize = self.states.iter().position(|x| *x == init_state).unwrap();
-            initial[self.num_agents + k] = TeamInitState {
+            initial.push(TeamInitState {
                 state: init_state,
                 index: init_state_index,
                 obj_index: self.num_agents + k
-            }
+            });
         }
-        self.initial = initial;
+         */
+        let dfa_init = team_input[0].product.initial;
+        self.initial = TeamState {
+            state: DFAModelCheckingPair { s: dfa_init.s, q: dfa_init.q },
+            agent: 0,
+            task: 0
+        };
     }
 
     pub fn create_transitions_and_labelling(&mut self, team_input: &Vec<TeamInput>) {
@@ -1475,7 +1482,6 @@ impl TeamMDP {
                             let action_reward = scalar_weight_rewards + sum_vect_sum;
                             min_action_values.push((transition.a.to_string(), action_reward));
                         }
-
                         let mut v: Vec<_> = min_action_values.iter().
                             map(|(z, x)| (z, NonNan::new(*x).unwrap())).collect();
                         v.sort_by_key(|key| key.1);
@@ -1501,7 +1507,12 @@ impl TeamMDP {
                     for (k, state) in task_states[j].iter().filter(|(_k,x)| x.agent == i) {
                         let mu_state = mu.iter().find(|x| x.team_state == *state).unwrap();
                         let action = match &mu_state.action {
-                            None => {panic!("There was no action recorded for state: ({},{},{},{})", state.state.s, state.state.q, state.agent, state.task)}
+                            None => {
+                                panic!(
+                                    "There was no action recorded for state: ({},{},{},{})",
+                                    state.state.s, state.state.q, state.agent, state.task
+                                )
+                            }
                             Some(a) => a
                         };
                         let agent_state_index = mu_state.agent_local_index;
@@ -1510,15 +1521,20 @@ impl TeamMDP {
                             let mut sum_vect_agent: Vec<f64> = vec![0.0; transition.to.len()];
                             let mut sum_vec_task: Vec<f64> = vec![0.0; transition.to.len()];
                             for (l, sprime) in transition.to.iter().enumerate() {
-                                if (i < self.num_agents - 1) || (i == self.num_agents - 1 && *action != "swi") {
-                                    let x_sprime_agent_index: usize = agent_states[sprime.state.agent].iter().position(|(_ind, x)| *x == sprime.state).unwrap();
-                                    let x_sprime_task_index: usize = task_states[sprime.state.task].iter().position(|(_ind, x)| *x == sprime.state).unwrap();
-                                    sum_vect_agent[l] = sprime.p * xagentbar[sprime.state.agent][x_sprime_agent_index];
-                                    sum_vec_task[l] = sprime.p * xtaskbar[sprime.state.task][x_sprime_task_index];
-                                } else {
-                                    let x_sprime_agent_index: usize = agent_states[sprime.state.agent].iter().position(|(_ind, x)| *x == sprime.state).unwrap();
-                                    sum_vect_agent[l] = sprime.p * xagentbar[sprime.state.agent][x_sprime_agent_index];
+                                //if (i < self.num_agents - 1) || (i == self.num_agents - 1 && *action != "swi") {
+                                let x_sprime_agent_index: usize = agent_states[sprime.state.agent].iter().
+                                    position(|(_ind, x)| *x == sprime.state).unwrap();
+                                let x_sprime_task_index: usize = task_states[sprime.state.task].iter().
+                                    position(|(_ind, x)| *x == sprime.state).unwrap();
+                                sum_vect_agent[l] = sprime.p * xagentbar[state.agent][x_sprime_agent_index];
+                                sum_vec_task[l] = sprime.p * xtaskbar[state.task][x_sprime_task_index];
+                                /*} else {
+                                    let x_sprime_agent_index: usize = agent_states[sprime.state.agent].iter().
+                                        position(|(_ind, x)| *x == sprime.state).unwrap();
+                                    sum_vect_agent[l] = sprime.p * xagentbar[state.agent][x_sprime_agent_index];
                                 }
+
+                                 */
                             }
 
                             let p_trans_agent: f64 = sum_vect_agent.iter().sum();
@@ -1557,19 +1573,38 @@ impl TeamMDP {
 
         let mut r: Vec<f64> = vec![0.0; self.num_agents + self.num_tasks];
         for k in 0..(self.num_tasks + self.num_agents) {
-            let init_state = self.initial.iter().find(|x| x.obj_index == k).unwrap().state;
+            //let init_state = self.initial.iter().find(|x| x.obj_index == k).unwrap();
+            let init_state = &self.initial;
             if k < self.num_agents {
-                let index = agent_states[k].iter().position(|(_index, x)| *x == init_state).unwrap();
+                //for l in self.initial.iter().filter(|x| x.obj_index == k) {
+                let index = agent_states[k].iter().position(|(_index, x)| x == init_state).unwrap();
+                println!("state: ({},{},{},{}) => {}",
+                         init_state.state.s, init_state.state.q, init_state.agent, init_state.task,
+                         yagentbar[k][index]);
                 r[k] = yagentbar[k][index];
-
+                //}
             } else {
-                let index: usize = task_states[k - self.num_agents].iter().position(|(_index, x)| *x == init_state).unwrap();
+                let index: usize = task_states[k - self.num_agents].iter().position(|(_index, x)| x == init_state).unwrap();
                 //println!("init state: ({},{},{},{})", init_state.state.s, init_state.state.q, init_state.agent, init_state.task);
                 r[k] = ytaskbar[init_state.task][index];
             }
         }
-        //println!("y_agent: {:?}", yagentbar);
-        //println!("r: {:?}", r);
+        /*for m in mu.iter() {
+            print!(
+                "state: ({},{},{},{}), action: {:?}, ",
+                m.team_state.state.s, m.team_state.state.q, m.team_state.agent, m.team_state.task,
+                m.action
+            );
+            for k in 0..self.num_agents {
+                if k < self.num_agents - 1 {
+                    print!("a{} cost={1:.2$}, ",k, yagentbar[k][m.agent_local_index], 3);
+                } else {
+                    print!("a{} cost={1:.2$}", k, yagentbar[k][m.agent_local_index], 3);
+                }
+            }
+            println!();
+        }
+         */
         Some((mu, r))
     }
 
@@ -1604,7 +1639,11 @@ impl TeamMDP {
 
     pub fn default() -> TeamMDP {
         TeamMDP {
-            initial: vec![],
+            initial: TeamState {
+                state: DFAModelCheckingPair { s: 0, q: 0 },
+                agent: 0,
+                task: 0
+            },
             states: vec![],
             transitions: vec![],
             labelling: vec![],
@@ -1652,6 +1691,7 @@ impl TeamMDP {
         let t_arr1 = arr1(target);
         while !member_closure {
             let w_new = lp4(&hullset, target, &dim);
+            println!("w' :{:?}", w_new);
             let safe_ret = self.min_exp_tot(&w_new, eps);
             match safe_ret {
                 Some((mu_new, r)) => {
@@ -1721,27 +1761,27 @@ pub fn lp3() {
             (*k, LpContinuous{
                 name: k.to_string(),
                 lower_bound: Some(0.0),
-                upper_bound: Some(1.0)
+                upper_bound: Some(100.0)
             })
         } else {
             (*k, LpContinuous::new("delta"))
         }).collect();
 
     problem += &x["delta"];
-    problem += (-7.0 * &x["a1"] -7.0 * &x["a2"] + 0.5 * &x["a3"] + 0.5 * &x["a4"] + 1.0 * &x["delta"]).ge(0.01);
-    problem += (-8.5 * &x["a1"] + 1.0 * &x["delta"]).le(0.0);
-    problem += (-13.66 * &x["a2"] + 1.0 * &x["delta"]).le(0.0);
-    problem += (-6.85 * &x["a1"] -6.33 * &x["a2"] + 0.8 * &x["a3"] + 1.0 * &x["delta"]).le(0.0);
-    problem += (-13.18 * &x["a1"] + 0.64 * &x["a4"] + 1.0 * &x["delta"]).le(0.0);
-    problem += (&x["a1"] + &x["a2"] + &x["a3"] + &x["a4"]).equal(1.0);
+    problem += (-700.0 * &x["a1"] -700.0 * &x["a2"] + 50.0 * &x["a3"] + 50.0 * &x["a4"] + 100.0 * &x["delta"]).ge(0.0);
+    problem += (-850.0 * &x["a1"] + 100.0 * &x["delta"]).le(0.0);
+    problem += (-1366.0 * &x["a2"] + 100.0 * &x["delta"]).le(0.0);
+    problem += (-685.0 * &x["a1"] -633 * &x["a2"] + 80.0 * &x["a3"] + 100 * &x["delta"]).le(0.0);
+    problem += (-1318.0 * &x["a1"] + 64.0 * &x["a4"] + 100.0 * &x["delta"]).le(0.0);
+    problem += (&x["a1"] + &x["a2"] + &x["a3"] + &x["a4"]).equal(100.0);
 
 
-    let solver = NativeCbcSolver::new();
+    let solver = CbcSolver::new();
 
     match solver.run(&problem) {
         Ok(sol) => {
-            //println!("Status {:?}", sol.status);
-            //println!("{:?}", sol.results);
+            println!("Status {:?}", sol.status);
+            println!("{:?}", sol.results);
         }
         Err(msg) => panic!("Native Cbc Solver panicked at run: {}", msg),
     }
@@ -1793,11 +1833,11 @@ pub fn lp4(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
     }
     problem += lp_sum(&const_vec).equal(1.0);
 
-    let solver = NativeCbcSolver::new();
+    let solver = GurobiSolver::new();
 
     match solver.run(&problem) {
         Ok(sol) => {
-            //println!("Status {:?}", sol.status);
+            println!("Status {:?}", sol.status);
             let mut result: Vec<f64> = vec![0.0; h[0].len()];
             for j in 0..*dim {
                 result[j] = ((*sol.results.get(&format!("w{}", j + 1)).unwrap() as f64 * 100000.0).round()/100000.0);
