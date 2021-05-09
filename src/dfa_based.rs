@@ -301,15 +301,12 @@ fn main() {
     }
 
     if run {
-        // TODO there is still an issue where the agent cost is not reflecting
-        //  what is happening in the scheduler, or not expected in what is
-        //  happening in the scheduler
         let w: Vec<f64> = vec![0., 0., 0.1, 0.2, 0.2];
         let safe_r = team_mdp.min_exp_tot(&w, &epsilon);
         match safe_r {
             None => {}
             Some((mu, r)) => {
-                for s in mu.iter() {
+                /*for s in mu.iter() {
                     println!(
                         "state: ({},{},{},{}), action: {:?}",
                         s.team_state.state.s,
@@ -319,6 +316,8 @@ fn main() {
                         s.action
                     );
                 }
+
+                 */
                 println!("r: {:?}", r);
             }
         }
