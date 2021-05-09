@@ -1425,7 +1425,7 @@ impl TeamMDP {
         }).collect();
         let weight = arr1(w);
 
-        let mut task_states: Vec<Vec<(usize, TeamState)>> = Vec::new();
+        //let mut task_states: Vec<Vec<(usize, TeamState)>> = Vec::new();
         // original => agent_states: Vec<Vec<(usize, TeamState)>> = Vec::new();
         //let mut agent_states: Vec<Vec<(usize, &TeamState)>> = self.states.iter().enumerate().map(|(i, x)|(i, x)).collect();
         let mut xtotexpcostbar: Vec<Vec<f64>> = Vec::new();
@@ -1444,16 +1444,16 @@ impl TeamMDP {
         }
 
         for j in (0..self.num_tasks) {
-            let state_space: Vec<(usize, TeamState)> = self.states.iter().filter(|x| x.task == j).enumerate().
-                map(|(k, x)| (k, *x)).collect();
-            let state_space_len: usize = state_space.len();
-            task_states.push(state_space);
-            let j_task_x: Vec<f64> = vec![0.0; state_space_len];
-            let j_task_y: Vec<f64> = vec![0.0; state_space_len];
-            xtotexpcostbar.push(j_task_x.clone());
-            ytotexpcostbar.push(j_task_y.clone());
-            xtaskbar.push(j_task_x);
-            ytaskbar.push(j_task_y);
+            //let state_space: Vec<(usize, TeamState)> = self.states.iter().filter(|x| x.task == j).enumerate().
+            //    map(|(k, x)| (k, *x)).collect();
+            //let state_space_len: usize = state_space.len();
+            //task_states.push(state_space);
+            //let j_task_x: Vec<f64> = vec![0.0; self.states.len()];
+            //let j_task_y: Vec<f64> = vec![0.0; self.states.len()];
+            xtotexpcostbar.push(vec![0.0; self.states.len()]);
+            ytotexpcostbar.push(vec![0.0; self.states.len()]);
+            xtaskbar.push(vec![0.0; self.states.len()]);
+            ytaskbar.push(vec![0.0; self.states.len()]);
         }
 
         /*
@@ -1473,20 +1473,33 @@ impl TeamMDP {
                 let mut epsilon: f64 = 1.0;
                 while epsilon > *eps {
                     // Only task states are referenced in the total cost calculation
-                    for (k, state) in task_states[j].iter().filter(|(_k, x)| x.agent == i && x.task == j) {
+                    for (k, state) in self.states.iter().enumerate().
+                        filter(|(_k, x)| x.agent == i && x.task == j) {
                         // we still need to calculate the overall position index for mu
-                        let x_s_index: usize = mu.iter().position(|x| x.team_state == *state).unwrap();
+                        let x_s_index: usize = k;
                         //let x_agent_index: usize = agent_states[i].iter().position(|(_k, x)| x == state).unwrap();
                         let mut min_action_values: Vec<(String, f64)> = Vec::new();
+                        let print_option: bool = self.transitions.iter().
+                            filter(|x| x.from == *state).
+                            any(|x| x.a == "swi");
                         for transition in self.transitions.iter().filter(|x| x.from == *state) {
                             let transition_reward = arr1(&transition.reward);
                             let scalar_weight_rewards = weight.dot(&transition_reward);
                             let mut sum_vect: Vec<f64> = vec![0.0; transition.to.len()];
                             //let mut test_state_reached: bool = false;
                             for (k2, sprime) in transition.to.iter().enumerate() {
-                                let x_sprime_index: usize = task_states[sprime.state.task].iter().
-                                    position(|(_index, x)| *x == sprime.state).unwrap();
+                                let x_sprime_index: usize = self.states.iter().
+                                    position(|x| *x == sprime.state).unwrap();
                                 sum_vect[k2] = sprime.p * xtotexpcostbar[j][x_sprime_index];
+                                if print_option {
+                                    println!(
+                                        "P(s: ({},{},{},{}), a: {} -> s': ({},{},{},{})) = {}",
+                                        state.state.s, state.state.q,state.agent, state.task,
+                                        transition.a,
+                                        sprime.state.state.s, sprime.state.state.q, sprime.state.agent, sprime.state.task,
+                                        sprime.p * xtotexpcostbar[j][x_sprime_index]
+                                    )
+                                }
                             }
                             let sum_vect_sum: f64 = sum_vect.iter().sum();
                             let action_reward = scalar_weight_rewards + sum_vect_sum;
@@ -1498,10 +1511,15 @@ impl TeamMDP {
                         let max_pair = v.last().unwrap();
                         let max_val = max_pair.1.inner();
                         let arg_max = max_pair.0;
-                        ytotexpcostbar[j][*k] = max_val;
+                        ytotexpcostbar[j][k] = max_val;
+                        if print_option {
+                            println!("agent: {}, task: {}", i, j);
+                            println!("action val choice: {:?}", v);
+                            println!("action chosen: {}", arg_max)
+                        }
                         mu[x_s_index].action = Some(arg_max.to_string());
                         mu[x_s_index].team_state = state.clone();
-                        mu[x_s_index].task_local_index = *k;
+                        mu[x_s_index].task_local_index = k;
                         mu[x_s_index].agent_local_index = x_s_index;
                     }
                     let y_bar_diff = absolute_diff_vect(&xtotexpcostbar[j], &ytotexpcostbar[j]);
@@ -1514,8 +1532,8 @@ impl TeamMDP {
                 }
                 epsilon = 1.0;
                 while epsilon > *eps {
-                    for (k, state) in task_states[j].iter().filter(|(_k,x)| x.agent == i) {
-                        let mu_state = mu.iter().find(|x| x.team_state == *state).unwrap();
+                    for (k, state) in self.states.iter().enumerate().filter(|(_k,x)| x.agent == i && x.task == j) {
+                        let mu_state = &mu[k];
                         let action = match &mu_state.action {
                             None => {
                                 panic!(
@@ -1525,19 +1543,17 @@ impl TeamMDP {
                             }
                             Some(a) => a
                         };
-                        let agent_state_index = mu_state.agent_local_index;
+                        let agent_state_index = k;
                         for transition in self.transitions.iter().
                             filter(|x| x.from == *state && x.a == *action) {
-                            // This is the big misunderstanding here, we need to loop over all of the agents to determine
-                            // the cost of task j, i.e. k applies only to agent vectors and not task vectors??
                             let mut sum_vect_agent: Vec<Vec<f64>> = vec![vec![0.0; transition.to.len()]; self.num_agents];
                             let mut sum_vec_task: Vec<f64> = vec![0.0; transition.to.len()];
                             for (l, sprime) in transition.to.iter().enumerate() {
                                 //if (i < self.num_agents - 1) || (i == self.num_agents - 1 && *action != "swi") {
                                 let x_sprime_agent_index: usize = self.states.iter().
                                     position(|x| *x == sprime.state).unwrap();
-                                let x_sprime_task_index: usize = task_states[sprime.state.task].iter().
-                                    position(|(_ind, x)| *x == sprime.state).unwrap();
+                                let x_sprime_task_index: usize = self.states.iter().
+                                    position(|x| *x == sprime.state).unwrap();
                                 for agent in 0..self.num_agents {
                                     sum_vect_agent[agent][l] = sprime.p * xagentbar[agent][x_sprime_agent_index];
                                 }
@@ -1556,7 +1572,7 @@ impl TeamMDP {
                                 let p_trans_agent: f64 = sum_vect_agent[agent].iter().sum();
                                 yagentbar[agent][agent_state_index] = transition.reward[agent] + p_trans_agent;
                             }
-                            ytaskbar[j][*k] = transition.reward[self.num_agents + j] + p_trans_task;
+                            ytaskbar[j][k] = transition.reward[self.num_agents + j] + p_trans_task;
                         }
                     }
                     let mut eps_inner: f64 = 0.0;
@@ -1587,6 +1603,9 @@ impl TeamMDP {
             }
         }
 
+        // TODO Now we are getting into the nitty gritty of it, we want the task probability from the initial state, not from the
+        //  initial task index as it is currently being calculated, but I need to see if this is correctly
+        //  recorded in the team scheduler
         let mut r: Vec<f64> = vec![0.0; self.num_agents + self.num_tasks];
         for k in 0..(self.num_tasks + self.num_agents) {
             //let init_state = self.initial.iter().find(|x| x.obj_index == k).unwrap();
@@ -1605,23 +1624,30 @@ impl TeamMDP {
                     agent: init_state.agent,
                     task: k - self.num_agents
                 };
-                println!("init state: ({},{},{},{})", init_task_state.state.s, init_task_state.state.q, init_task_state.agent, init_task_state.task);
-                let index: usize = task_states[k - self.num_agents].iter().position(|(_index, x)| *x == init_task_state).unwrap();
+                //println!("init state: ({},{},{},{})", init_task_state.state.s, init_task_state.state.q, init_task_state.agent, init_task_state.task);
+                let index: usize = self.states.iter().position(|x| *x == init_task_state).unwrap();
                 r[k] = ytaskbar[k - self.num_agents][index];
             }
         }
+
         for m in mu.iter() {
             print!(
                 "state: ({},{},{},{}), action: {:?}, ",
                 m.team_state.state.s, m.team_state.state.q, m.team_state.agent, m.team_state.task,
                 m.action
             );
-            for k in 0..self.num_agents {
-                if k < self.num_agents - 1 {
+            for k in 0..(self.num_agents + self.num_tasks) {
+                if k < self.num_agents {
                     print!("a{} cost={1:.2$}, ", k, yagentbar[k][m.agent_local_index], 3);
                 } else {
-                    print!("a{} cost={1:.2$}", k, yagentbar[k][m.agent_local_index], 3);
+                    if k < (self.num_agents + self.num_tasks) {
+                        //println!("k: {}, task: {}", k, k - self.num_agents);
+                        print!("a{} cost={1:.2$}, ", k, ytaskbar[k - self.num_agents][m.agent_local_index], 3);
+                    } else {
+                        print!("a{} cost={1:.2$}", k, ytaskbar[k - self.num_agents][m.agent_local_index], 3);
+                    }
                 }
+
             }
             println!();
         }

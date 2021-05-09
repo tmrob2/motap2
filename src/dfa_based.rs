@@ -301,7 +301,7 @@ fn main() {
     }
 
     if run {
-        let w: Vec<f64> = vec![0., 0., 0.1, 0.2, 0.2];
+        let w: Vec<f64> = vec![0.49, 0.51, 0., 0., 0.];
         let safe_r = team_mdp.min_exp_tot(&w, &epsilon);
         match safe_r {
             None => {}
@@ -321,6 +321,8 @@ fn main() {
                 println!("r: {:?}", r);
             }
         }
+
+
         //let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon);
     }
 }
