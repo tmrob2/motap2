@@ -16,8 +16,10 @@ use petgraph::algo::{kosaraju_scc, has_path_connecting, all_simple_paths};
 use std::hash::Hash;
 use ndarray::arr1;
 //use minilp::{Problem, OptimizationDirection, ComparisonOp, Variable, LinearExpr};
-use lp_modeler::dsl::*;
-use lp_modeler::solvers::{SolverTrait, CbcSolver, Solution, NativeCbcSolver, GurobiSolver};
+//use lp_modeler::dsl::*;
+//use lp_modeler::solvers::{SolverTrait, CbcSolver, Solution, NativeCbcSolver, GurobiSolver};
+extern crate gurobi;
+use gurobi::*;
 
 //use lazy_static::lazy_static;
 
@@ -1428,8 +1430,8 @@ impl TeamMDP {
         //let mut task_states: Vec<Vec<(usize, TeamState)>> = Vec::new();
         // original => agent_states: Vec<Vec<(usize, TeamState)>> = Vec::new();
         //let mut agent_states: Vec<Vec<(usize, &TeamState)>> = self.states.iter().enumerate().map(|(i, x)|(i, x)).collect();
-        let mut xtotexpcostbar: Vec<Vec<f64>> = Vec::new();
-        let mut ytotexpcostbar: Vec<Vec<f64>> = Vec::new();
+        let mut xtotexpcostbar: Vec<f64> = Vec::new();
+        let mut ytotexpcostbar: Vec<f64> = Vec::new();
         let mut xtaskbar: Vec<Vec<f64>> = Vec::new();
         let mut ytaskbar: Vec<Vec<f64>> = Vec::new();
         let mut xagentbar: Vec<Vec<f64>> = Vec::new();
@@ -1443,6 +1445,9 @@ impl TeamMDP {
             yagentbar.push(i_agent_y);
         }
 
+        xtotexpcostbar = vec![0.0; self.states.len()];
+        ytotexpcostbar = vec![0.0; self.states.len()];
+
         for j in (0..self.num_tasks) {
             //let state_space: Vec<(usize, TeamState)> = self.states.iter().filter(|x| x.task == j).enumerate().
             //    map(|(k, x)| (k, *x)).collect();
@@ -1450,8 +1455,8 @@ impl TeamMDP {
             //task_states.push(state_space);
             //let j_task_x: Vec<f64> = vec![0.0; self.states.len()];
             //let j_task_y: Vec<f64> = vec![0.0; self.states.len()];
-            xtotexpcostbar.push(vec![0.0; self.states.len()]);
-            ytotexpcostbar.push(vec![0.0; self.states.len()]);
+            //xtotexpcostbar.push(vec![0.0; self.states.len()]);
+            //ytotexpcostbar.push(vec![0.0; self.states.len()]);
             xtaskbar.push(vec![0.0; self.states.len()]);
             ytaskbar.push(vec![0.0; self.states.len()]);
         }
@@ -1479,9 +1484,12 @@ impl TeamMDP {
                         let x_s_index: usize = k;
                         //let x_agent_index: usize = agent_states[i].iter().position(|(_k, x)| x == state).unwrap();
                         let mut min_action_values: Vec<(String, f64)> = Vec::new();
+
                         let print_option: bool = self.transitions.iter().
                             filter(|x| x.from == *state).
-                            any(|x| x.a == "swi");
+                            any(|x| x.a == "swi" && x.from.agent == 0 && x.from.task == 1);
+
+
                         for transition in self.transitions.iter().filter(|x| x.from == *state) {
                             let transition_reward = arr1(&transition.reward);
                             let scalar_weight_rewards = weight.dot(&transition_reward);
@@ -1491,6 +1499,7 @@ impl TeamMDP {
                                 let x_sprime_index: usize = self.states.iter().
                                     position(|x| *x == sprime.state).unwrap();
                                 sum_vect[k2] = sprime.p * xtotexpcostbar[j][x_sprime_index];
+
                                 if print_option {
                                     println!(
                                         "P(s: ({},{},{},{}), a: {} -> s': ({},{},{},{})) = {}",
@@ -1500,6 +1509,8 @@ impl TeamMDP {
                                         sprime.p * xtotexpcostbar[j][x_sprime_index]
                                     )
                                 }
+
+
                             }
                             let sum_vect_sum: f64 = sum_vect.iter().sum();
                             let action_reward = scalar_weight_rewards + sum_vect_sum;
@@ -1512,11 +1523,14 @@ impl TeamMDP {
                         let max_val = max_pair.1.inner();
                         let arg_max = max_pair.0;
                         ytotexpcostbar[j][k] = max_val;
+
                         if print_option {
                             println!("agent: {}, task: {}", i, j);
                             println!("action val choice: {:?}", v);
                             println!("action chosen: {}", arg_max)
                         }
+
+
                         mu[x_s_index].action = Some(arg_max.to_string());
                         mu[x_s_index].team_state = state.clone();
                         mu[x_s_index].task_local_index = k;
@@ -1532,7 +1546,8 @@ impl TeamMDP {
                 }
                 epsilon = 1.0;
                 while epsilon > *eps {
-                    for (k, state) in self.states.iter().enumerate().filter(|(_k,x)| x.agent == i && x.task == j) {
+                    for (k, state) in self.states.iter().enumerate().
+                        filter(|(_k,x)| x.agent == i && x.task == j) {
                         let mu_state = &mu[k];
                         let action = match &mu_state.action {
                             None => {
@@ -1547,7 +1562,7 @@ impl TeamMDP {
                         for transition in self.transitions.iter().
                             filter(|x| x.from == *state && x.a == *action) {
                             let mut sum_vect_agent: Vec<Vec<f64>> = vec![vec![0.0; transition.to.len()]; self.num_agents];
-                            let mut sum_vec_task: Vec<f64> = vec![0.0; transition.to.len()];
+                            let mut sum_vec_task: Vec<Vec<f64>> = vec![vec![0.0; transition.to.len()]; self.num_tasks];
                             for (l, sprime) in transition.to.iter().enumerate() {
                                 //if (i < self.num_agents - 1) || (i == self.num_agents - 1 && *action != "swi") {
                                 let x_sprime_agent_index: usize = self.states.iter().
@@ -1557,55 +1572,61 @@ impl TeamMDP {
                                 for agent in 0..self.num_agents {
                                     sum_vect_agent[agent][l] = sprime.p * xagentbar[agent][x_sprime_agent_index];
                                 }
-                                sum_vec_task[l] = sprime.p * xtaskbar[state.task][x_sprime_task_index];
-                                /*} else {
+                                for task in 0..self.num_tasks {
+                                    sum_vec_task[task][l] = sprime.p * xtaskbar[task][x_sprime_task_index];
+                                }
+
+                                /*
+                                } else {
                                     let x_sprime_agent_index: usize = agent_states[sprime.state.agent].iter().
                                         position(|(_ind, x)| *x == sprime.state).unwrap();
                                     sum_vect_agent[l] = sprime.p * xagentbar[state.agent][x_sprime_agent_index];
                                 }
-
-                                 */
+                                */
                             }
-
-                            let p_trans_task: f64 = sum_vec_task.iter().sum();
                             for agent in 0..self.num_agents {
                                 let p_trans_agent: f64 = sum_vect_agent[agent].iter().sum();
                                 yagentbar[agent][agent_state_index] = transition.reward[agent] + p_trans_agent;
                             }
-                            ytaskbar[j][k] = transition.reward[self.num_agents + j] + p_trans_task;
+                            for task in 0..self.num_tasks {
+                                let p_trans_task: f64 = sum_vec_task[task].iter().sum();
+                                ytaskbar[task][k] = transition.reward[self.num_agents + task] + p_trans_task;
+                            }
                         }
                     }
                     let mut eps_inner: f64 = 0.0;
-                    let xbar_agent_val: Vec<f64> = xagentbar[i].iter().map(|x| *x).collect();
-                    let ybar_agent_val: Vec<f64> = yagentbar[i].iter().map(|x| *x).collect();
-                    let diff_agent = absolute_diff_vect(&xbar_agent_val, &ybar_agent_val);
-                    let mut diff_agent_nonan: Vec<NonNan> = diff_agent.iter().
-                        map(|x| NonNan::new(*x).unwrap()).collect();
-                    diff_agent_nonan.sort();
-                    let max_val_agent = diff_agent_nonan.last().unwrap().inner();
-                    if max_val_agent > eps_inner {
-                        eps_inner = max_val_agent;
+                    for agent in 0..self.num_agents {
+                        let xbar_agent_val: Vec<f64> = xagentbar[agent].iter().map(|x| *x).collect();
+                        let ybar_agent_val: Vec<f64> = yagentbar[agent].iter().map(|x| *x).collect();
+                        let diff_agent = absolute_diff_vect(&xbar_agent_val, &ybar_agent_val);
+                        let mut diff_agent_nonan: Vec<NonNan> = diff_agent.iter().
+                            map(|x| NonNan::new(*x).unwrap()).collect();
+                        diff_agent_nonan.sort();
+                        let max_val_agent = diff_agent_nonan.last().unwrap().inner();
+                        if max_val_agent > eps_inner {
+                            eps_inner = max_val_agent;
+                        }
+                        xagentbar[agent] = yagentbar[agent].to_vec();
                     }
-                    xagentbar[i] = yagentbar[i].to_vec();
-                    let xbar_task_val: Vec<f64> = xtaskbar[j].iter().map(|x| *x).collect();
-                    let ybar_task_val: Vec<f64> = ytaskbar[j].iter().map(|x| *x).collect();
-                    let diff_task = absolute_diff_vect(&xbar_task_val, &ybar_task_val);
-                    let mut diff_task_nonan: Vec<NonNan> = diff_task.iter().map(|x| NonNan::new(*x).unwrap()).collect();
-                    diff_task_nonan.sort();
-                    let max_val_task = diff_task_nonan.last().unwrap().inner();
-                    if max_val_task > eps_inner {
-                        eps_inner = max_val_task;
+
+                    for task in 0..self.num_tasks {
+                        let xbar_task_val: Vec<f64> = xtaskbar[task].iter().map(|x| *x).collect();
+                        let ybar_task_val: Vec<f64> = ytaskbar[task].iter().map(|x| *x).collect();
+                        let diff_task = absolute_diff_vect(&xbar_task_val, &ybar_task_val);
+                        let mut diff_task_nonan: Vec<NonNan> = diff_task.iter().map(|x| NonNan::new(*x).unwrap()).collect();
+                        diff_task_nonan.sort();
+                        let max_val_task = diff_task_nonan.last().unwrap().inner();
+                        if max_val_task > eps_inner {
+                            eps_inner = max_val_task;
+                        }
+                        xtaskbar[task] = ytaskbar[task].to_vec();
                     }
-                    xtaskbar[j] = ytaskbar[j].to_vec();
-                    epsilon = eps_inner;
                     //println!("epsilon bar: {}", epsilon);
+                    epsilon = eps_inner;
                 }
             }
         }
 
-        // TODO Now we are getting into the nitty gritty of it, we want the task probability from the initial state, not from the
-        //  initial task index as it is currently being calculated, but I need to see if this is correctly
-        //  recorded in the team scheduler
         let mut r: Vec<f64> = vec![0.0; self.num_agents + self.num_tasks];
         for k in 0..(self.num_tasks + self.num_agents) {
             //let init_state = self.initial.iter().find(|x| x.obj_index == k).unwrap();
@@ -1613,9 +1634,11 @@ impl TeamMDP {
             if k < self.num_agents {
                 //for l in self.initial.iter().filter(|x| x.obj_index == k) {
                 let index = self.states.iter().position(|x| x == init_state).unwrap();
-                println!("state: ({},{},{},{}) => {}",
+                /*println!("state: ({},{},{},{}) => {}",
                          init_state.state.s, init_state.state.q, init_state.agent, init_state.task,
                          yagentbar[k][index]);
+
+                 */
                 r[k] = yagentbar[k][index];
                 //}
             } else {
@@ -1629,6 +1652,7 @@ impl TeamMDP {
                 r[k] = ytaskbar[k - self.num_agents][index];
             }
         }
+
 
         for m in mu.iter() {
             print!(
@@ -1651,6 +1675,7 @@ impl TeamMDP {
             }
             println!();
         }
+
         Some((mu, r))
     }
 
@@ -1705,12 +1730,23 @@ impl TeamMDP {
 
         println!("num tasks: {}, num agents {}", self.num_tasks, self.num_agents);
 
-        let mut extreme_points: Vec<Vec<f64>> = vec![vec![0.0; self.num_agents + self.num_tasks]; self.num_agents + self.num_tasks];
+        let mut extreme_points: Vec<Vec<f64>> = vec![vec![0.0; self.num_agents + self.num_tasks]; self.num_agents + self.num_tasks + 1];
 
         for k in 0..(self.num_agents + self.num_tasks) {
             extreme_points[k][k] = 1.0;
             let w_extr: &Vec<f64> = &extreme_points[k];
             println!("w: {:?}", w_extr);
+            let safe_ret = self.min_exp_tot(&w_extr, eps);
+            match safe_ret {
+                Some((mu_new, r)) => {
+                    hullset.push(r);
+                },
+                None => panic!("No value was returned from the maximisation")
+            }
+        }
+        for i in 0..(self.num_tasks + self.num_agents) {
+            extreme_points[self.num_tasks + self.num_agents][i] = 1.0 / (self.num_tasks + self.num_agents) as f64;
+            let w_extr: &Vec<f64> = &extreme_points[self.num_agents + self.num_tasks];
             let safe_ret = self.min_exp_tot(&w_extr, eps);
             match safe_ret {
                 Some((mu_new, r)) => {
@@ -1736,9 +1772,13 @@ impl TeamMDP {
         let mut member_closure: bool = false;
         let dim = self.num_tasks + self.num_agents;
         let t_arr1 = arr1(target);
+        let mut counter: u32 = 1;
         while !member_closure {
-            let w_new = lp4(&hullset, target, &dim);
+            let w_new = lp6(&hullset, target, &dim, &self.num_agents);
             println!("w' :{:?}", w_new);
+            for x in hullset.iter() {
+                println!("x: {:?}", x);
+            }
             let safe_ret = self.min_exp_tot(&w_new, eps);
             match safe_ret {
                 Some((mu_new, r)) => {
@@ -1749,7 +1789,7 @@ impl TeamMDP {
                     let wt_dot = weight_arr1.dot(&t_arr1);
                     if wr_dot < wt_dot {
                         println!("Multi-objective criteria not possible");
-                        return None
+                        return None;
                     }
                     hullset.push(r);
                     mu_vect.push(mu_new);
@@ -1761,79 +1801,132 @@ impl TeamMDP {
                 },
                 None => panic!("No value was returned from the maximisation")
             }
+            if counter >= 2 {
+                return None;
+            }
+            counter += 1;
         }
         Some(output)
     }
+}
 
+pub fn lp5(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
+    //h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize
+    let env = Env::new("logfile.log").unwrap();
+
+    // create an empty model
+    let mut model = env.new_model("model1").unwrap();
+
+    // add vars
+    let mut v: HashMap<String, gurobi::Var> = HashMap::new();
+    for i in 0..*dim {
+        v.insert(format!("w{}", i), model.add_var(&*format!("w{}", i), Continuous, 0.0, 0.0, 1.0, &[], &[]).unwrap());
+    }
+    let d = model.add_var("d", Continuous, 0.0, -gurobi::INFINITY, gurobi::INFINITY, &[], &[]).unwrap();
+
+    model.update().unwrap();
+    let mut w_vars = Vec::new();
+    for i in 0..*dim {
+        let w = v.get(&format!("w{}", i)).unwrap();
+        w_vars.push(w.clone());
+    }
+
+    let mut t_expr = LinExpr::new();
+    let t_expr1 = t_expr.add_terms(&t[..], &w_vars[..]);
+    let t_expr2 = t_expr1.add_term(1.0, d.clone());
+    model.add_constr("t0", t_expr2, gurobi::Greater, 0.0);
+
+    for (i, x) in h.iter().enumerate() {
+        let mut expr = LinExpr::new();
+        let expr1 = expr.add_terms(&x[..], &w_vars[..]);
+        let expr2 = expr1.add_term(1.0, d.clone());
+        model.add_constr(&*format!("c{}", i), expr2, gurobi::Less, 0.0);
+    }
+
+    let mut w_expr = LinExpr::new();
+    let coefs: Vec<f64> = vec![1.0; *dim];
+    let final_expr = w_expr.add_terms( &coefs[..], &w_vars[..]);
+    model.add_constr("w_final", final_expr, gurobi::Equal, 1.0);
+
+    model.update().unwrap();
+
+    model.set_objective(&d, gurobi::Maximize).unwrap();
+
+    println!("Model type: {:?}", model.get(gurobi::attr::IsMIP));
+
+    model.write("logfile.lp").unwrap();
+    
+    model.optimize().unwrap();
+    println!("model status: {:?}", model.status());
+    println!("model obj: {:?}", model.get(gurobi::attr::ObjVal).unwrap());
+    let mut vars = Vec::new();
+    for i in (0..*dim) {
+        let var = v.get(&format!("w{}",i)).unwrap();
+        vars.push(var.clone());
+    }
+    let val = model.get_values(attr::X, &vars[..]).unwrap();
+    val
+}
+
+pub fn lp6(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize, agents: &usize) -> Vec<f64> {
+    //h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize
+    let env = Env::new("logfile.log").unwrap();
+
+    // create an empty model
+    let mut model = env.new_model("model1").unwrap();
+
+    // add vars
+    let mut v: HashMap<String, gurobi::Var> = HashMap::new();
+    for i in 0..*dim {
+        v.insert(format!("w{}", i), model.add_var(&*format!("w{}", i), Continuous, 0.0, 0.0, 1.0, &[], &[]).unwrap());
+    }
+    let d = model.add_var("d", Continuous, 0.0, -gurobi::INFINITY, gurobi::INFINITY, &[], &[]).unwrap();
+
+    model.update().unwrap();
+    let mut w_vars = Vec::new();
+    for i in 0..*dim {
+        let w = v.get(&format!("w{}", i)).unwrap();
+        w_vars.push(w.clone());
+    }
+
+    let mut counter: u32 = 0;
+    for x in h.iter() {
+        for (i, y) in x.iter().enumerate() {
+            if i < *agents {
+                model.add_constr(&*format!("c{}", counter), &w_vars[i] * (*y - t[i]) - &d * 1.0, ConstrSense::Greater, 0.0);
+            } else {
+                model.add_constr(&*format!("c{}", counter), &w_vars[i] * (t[i] - *y) - &d * 1.0, ConstrSense::Greater, 0.0);
+            }
+            counter += 1;
+        }
+    }
+
+    let mut w_expr = LinExpr::new();
+    let coefs: Vec<f64> = vec![1.0; *dim];
+    let final_expr = w_expr.add_terms( &coefs[..], &w_vars[..]);
+    model.add_constr("w_final", final_expr, gurobi::Equal, 1.0);
+
+    model.update().unwrap();
+
+    model.set_objective(&d, gurobi::Maximize).unwrap();
+
+    println!("Model type: {:?}", model.get(gurobi::attr::IsMIP));
+
+    model.write("logfile.lp").unwrap();
+
+    model.optimize().unwrap();
+    println!("model status: {:?}", model.status());
+    println!("model obj: {:?}", model.get(gurobi::attr::ObjVal).unwrap());
+    let mut vars = Vec::new();
+    for i in (0..*dim) {
+        let var = v.get(&format!("w{}",i)).unwrap();
+        vars.push(var.clone());
+    }
+    let val = model.get_values(attr::X, &vars[..]).unwrap();
+    val
 }
 
 /*
-/// Linear programming test function. Simple implementation of two tasks, to two agents
-pub fn pareto_lp_delta() {
-
-    let mut problem = Problem::new(OptimizationDirection::Maximize);
-    let a1 = problem.add_var(0.0, (0.0, 1.0));
-    let a2 = problem.add_var(0.0, (0.0, 1.0));
-    let a3 = problem.add_var(0.0, (0.0, 1.0));
-    let a4 = problem.add_var(0.0, (0.0, 1.0));
-    let delta = problem.add_var(1.0, (f64::NEG_INFINITY, f64::INFINITY));
-
-    problem.add_constraint(&[(a1, -7.0),(a2, -7.0),(a3, 0.5),(a4, 0.5), (delta, 1.0)], ComparisonOp::Ge, 0.0);
-    problem.add_constraint(&[(a1, -8.5), (delta, 1.0)], ComparisonOp::Le, 0.0);
-    problem.add_constraint(&[(a2, -13.66),(delta, 1.0)], ComparisonOp::Le, 0.0);
-    problem.add_constraint(&[(a1, -6.85),(a2, -6.33),(a3, 0.8),(delta, 1.0)], ComparisonOp::Le, 0.0);
-    problem.add_constraint(&[(a1, -13.18),(a3, 0.64),(delta, 1.0)], ComparisonOp::Le, 0.0);
-    problem.add_constraint(&[(a1, -1.0),(a2, 1.0),(a3, 1.0),(a4, 1.0)], ComparisonOp::Eq, 1.0);
-
-    let sol = problem.solve().unwrap();
-    println!("solution: {:?}", sol);
-    println!("solution => a1: {:?}, a2: {:?}, a3: {:?}, a4: {:?}", sol[a1], sol[a2], sol[a3], sol[a4]);
-}
-
- */
-
-pub fn lp3() {
-
-    let mut problem = LpProblem::new("test", LpObjective::Maximize);
-    let objective: HashMap<&str, f32> = vec![
-        ("a1", 0.0),
-        ("a2", 0.0),
-        ("a3", 0.0),
-        ("a4", 0.0),
-        ("delta", 1.0)
-    ].into_iter().collect();
-
-    let x: HashMap<&str, LpContinuous> = objective.iter().
-        map(|(k, v)| if k.chars().next().unwrap().to_string() == "a".to_string() {
-            (*k, LpContinuous{
-                name: k.to_string(),
-                lower_bound: Some(0.0),
-                upper_bound: Some(100.0)
-            })
-        } else {
-            (*k, LpContinuous::new("delta"))
-        }).collect();
-
-    problem += &x["delta"];
-    problem += (-700.0 * &x["a1"] -700.0 * &x["a2"] + 50.0 * &x["a3"] + 50.0 * &x["a4"] + 100.0 * &x["delta"]).ge(0.0);
-    problem += (-850.0 * &x["a1"] + 100.0 * &x["delta"]).le(0.0);
-    problem += (-1366.0 * &x["a2"] + 100.0 * &x["delta"]).le(0.0);
-    problem += (-685.0 * &x["a1"] -633 * &x["a2"] + 80.0 * &x["a3"] + 100 * &x["delta"]).le(0.0);
-    problem += (-1318.0 * &x["a1"] + 64.0 * &x["a4"] + 100.0 * &x["delta"]).le(0.0);
-    problem += (&x["a1"] + &x["a2"] + &x["a3"] + &x["a4"]).equal(100.0);
-
-
-    let solver = CbcSolver::new();
-
-    match solver.run(&problem) {
-        Ok(sol) => {
-            println!("Status {:?}", sol.status);
-            println!("{:?}", sol.results);
-        }
-        Err(msg) => panic!("Native Cbc Solver panicked at run: {}", msg),
-    }
-}
-
 pub fn lp4(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
     let mut problem = LpProblem::new("test", LpObjective::Maximize);
     let mut objective: HashMap<String, f32> = HashMap::new();
@@ -1865,9 +1958,9 @@ pub fn lp4(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
     problem += lp_sum(&const_vec).ge(0.0);
 
     // create the hullset constraints
-    for i in h.iter() {
+    for q in h.iter() {
         const_vec = Vec::new();
-        for (k, j) in i.iter().enumerate() {
+        for (k, j) in q.iter().enumerate() {
             const_vec.push((*j as f32) * x.get(&format!("w{}", k + 1)).unwrap());
         }
         const_vec.push(1.0 * &x["delta"]);
@@ -1887,111 +1980,12 @@ pub fn lp4(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
             println!("Status {:?}", sol.status);
             let mut result: Vec<f64> = vec![0.0; h[0].len()];
             for j in 0..*dim {
-                result[j] = ((*sol.results.get(&format!("w{}", j + 1)).unwrap() as f64 * 100000.0).round()/100000.0);
+                result[j] = *sol.results.get(&format!("w{}", j + 1)).unwrap() as f64;
             }
             result
         }
         Err(msg) => panic!("Native Cbc Solver panicked at run: {}", msg),
     }
-}
-
-/*
-pub fn lp2(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
-    let mut problem = Problem::new(OptimizationDirection::Maximize);
-
-    let mut weight_vars: HashMap<String, Variable> = HashMap::new();
-    for i in 0..*dim  {
-        weight_vars.insert(format!("w{}", i), problem.add_var(0.0, (0.0, 1.0)));
-    }
-    // Objective variable
-    let delta = problem.add_var(1.0, (f64::NEG_INFINITY, f64::INFINITY));
-
-    // Inequalities of the form: Target points or points above the separating hyperplane
-    // <a, x> + delta >= 0
-    let mut lhs = LinearExpr::empty();
-    for j in 0..*dim {
-        let var = weight_vars.get(&*format!("w{}", j)).unwrap();
-        //println!("added pos constraint {} var with coeff: {}", format!("w{}", j), t[j]);
-        lhs.add(*var, t[j]);
-    }
-    lhs.add(delta, 1.0);
-    //println!("added constraint: {:?}", lhs);
-    problem.add_constraint(lhs, ComparisonOp::Ge, 0.0);
-
-    // Inequalities of the form: point elements of the Hull set, or points below the separating hyperplane
-    // <a, x> + delta <= 0
-    for neg in h.iter() {
-        lhs = LinearExpr::empty();
-        for j in 0..*dim {
-            let var = weight_vars.get(&*format!("w{}", j)).unwrap();
-            lhs.add(*var, neg[j]);
-        }
-        lhs.add(delta, 1.0);
-        //println!("added constraint: {:?}", lhs);
-        problem.add_constraint(lhs, ComparisonOp::Le, 0.0);
-    }
-
-    // Weight vector must sum to 1 to meet the conditions of convexity
-    lhs = LinearExpr::empty();
-    for j in 0..*dim {
-        let var = weight_vars.get(&*format!("w{}", j)).unwrap();
-        lhs.add(*var, 1.0);
-    }
-    //println!("added constraint: {:?}", lhs);
-    problem.add_constraint(lhs, ComparisonOp::Eq, 1.0);
-
-    let sol = problem.solve().unwrap();
-    let mut result: Vec<f64> = vec![0.0; *dim];
-    for j in 0..*dim {
-        let var = weight_vars.get(&*format!("w{}", j)).unwrap();
-        result[j] = sol[*var];
-    }
-    result
-}
-
- */
-
-/*
-pub fn pareto_lp(h: &Vec<Vec<f64>>, k: &Vec<Vec<f64>>, dim: &u32) -> Vec<f64> {
-    let mut problem = Problem::new(OptimizationDirection::Maximize);
-
-    let mut vars: HashMap<String, Variable> = HashMap::new();
-    for i in 0..*dim {
-        vars.insert(format!("w{}", i), problem.add_var(0., (0., 1.)));
-    }
-    vars.insert(format!("delta"), problem.add_var(1.0, (f64::NEG_INFINITY, f64::INFINITY)));
-    let b = problem.add_var(0., (f64::NEG_INFINITY, f64::INFINITY));
-    for x in h.iter() {
-        let mut lhs = LinearExpr::empty();
-        for j in 0..*dim {
-            lhs.add(*vars.get(&*format!("w{}", j)).unwrap(), x[j as usize]);
-        }
-        lhs.add(b, 1.0);
-        lhs.add(*vars.get("delta").unwrap(), -1.0);
-        problem.add_constraint(lhs, ComparisonOp::Ge, 0.);
-    }
-    for x in k.iter() {
-        let mut lhs = LinearExpr::empty();
-        for j in 0..*dim {
-            lhs.add(*vars.get(&*format!("w{}", j)).unwrap(), x[j as usize]);
-        }
-        lhs.add(b, 1.0);
-        lhs.add(*vars.get("delta").unwrap(), 1.0);
-        problem.add_constraint(lhs, ComparisonOp::Le, 0.);
-    };
-    let mut lhs = LinearExpr::empty();
-    for j in 0..*dim {
-        lhs.add(*vars.get(&*format!("w{}", j)).unwrap(), 1.0)
-    }
-    problem.add_constraint(lhs, ComparisonOp::Eq, 1.);
-
-    let solution = problem.solve().unwrap();
-    let mut w: Vec<f64> = vec![0.; *dim as usize];
-    for i in 0..*dim {
-        let w_val: f64 = ((solution[*vars.get(&*format!("w{}", i)).unwrap()] * 1000.).round() / 1000.) as f64;
-        w[i as usize] = w_val;
-    }
-    w
 }
 
  */
@@ -2020,7 +2014,7 @@ pub fn absolute_diff_vect(a: &Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
     c
 }
 
-pub fn parse_int(s: &str) -> Result<u32, ParseIntError> {
+pub fn parse_int(s: &str) -> std::result::Result<u32, ParseIntError> {
     s.parse::<u32>()
 }
 
@@ -2029,28 +2023,28 @@ pub fn parse_str_vect(s: &str) -> serde_json::Result<Vec<u32>> {
     Ok(u)
 }
 
-pub fn read_mdp_json<'a, P: AsRef<Path>>(path:P) -> Result<Vec<MDP>, Box<dyn Error>> {
+pub fn read_mdp_json<'a, P: AsRef<Path>>(path:P) -> std::result::Result<Vec<MDP>, Box<dyn Error>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let u = serde_json::from_reader(reader)?;
     Ok(u)
 }
 
-pub fn read_dra_json<'a, P: AsRef<Path>>(path:P) -> Result<Vec<DRA>, Box<dyn Error>> {
+pub fn read_dra_json<'a, P: AsRef<Path>>(path:P) -> std::result::Result<Vec<DRA>, Box<dyn Error>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let u = serde_json::from_reader(reader)?;
     Ok(u)
 }
 
-pub fn read_dfa_json<'a, P: AsRef<Path>>(path: P) -> Result<Vec<DFA>, Box<dyn Error>> {
+pub fn read_dfa_json<'a, P: AsRef<Path>>(path: P) -> std::result::Result<Vec<DFA>, Box<dyn Error>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let u = serde_json::from_reader(reader)?;
     Ok(u)
 }
 
-pub fn read_target<'a, P: AsRef<Path>>(path: P) -> Result<Target, Box<dyn Error>> {
+pub fn read_target<'a, P: AsRef<Path>>(path: P) -> std::result::Result<Target, Box<dyn Error>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let u = serde_json::from_reader(reader)?;

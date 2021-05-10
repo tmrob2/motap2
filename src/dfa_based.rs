@@ -1,6 +1,10 @@
 //use itertools::{Itertools, enumerate};
 use clap::{clap_app, Values};
-use lib::{read_mdp_json, MDP, DFA, DFAProductMDP, read_dfa_json, DFAModelCheckingPair, TeamInput, TeamMDP, NonNan, absolute_diff_vect, read_target, Target, lp3, lp4, Mu};
+use lib::{
+    read_mdp_json, MDP, DFA, DFAProductMDP,
+    read_dfa_json, DFAModelCheckingPair, TeamInput, TeamMDP,
+    NonNan, absolute_diff_vect, read_target, Target, Mu, lp5, lp6
+};
 use std::fs::File;
 use std::io::Write;
 use petgraph::{dot::Dot};
@@ -102,18 +106,6 @@ fn main() {
     };
 
     // If block used for testing certain inputs with the motap CLI
-    if test {
-        //lp3();
-        let target: Vec<f64> = vec![-7.0, -7.0, 0.5, 0.5];
-        let hullset: Vec<Vec<f64>> = vec![
-            vec![-8.5, 0.0, 0.0, 0.0],
-            vec![0.0, -13.66, 0.0, 0.0],
-            vec![-6.85, -6.33, 0.8, 0.0],
-            vec![-13.18, 0.0, 0.0, 0.64]
-        ];
-        let result = lp4(&hullset, &target, &4usize);
-        println!("result: {:?}", result);
-    }
 
     let verbose: u32 = match matches.subcommand() {
         ("motap", Some(f)) => {
@@ -199,6 +191,24 @@ fn main() {
     let mut target_parse: Vec<f64> = Vec::new();
     let mut num_agents: usize = 0;
     let mut num_tasks: usize = 0;
+    if test {
+        /*
+        //lp3();
+
+        let result = lp4(&hullset, &target, &4usize);
+        println!("result: {:?}", result);
+
+         */
+        let target: Vec<f64> = vec![-7.0, -7.0, 0.5, 0.5];
+        let hullset: Vec<Vec<f64>> = vec![
+            vec![-8.5, 0.0, 0.0, 0.0],
+            vec![0.0, -13.66, 0.0, 0.0],
+            vec![-6.85, -6.33, 0.8, 0.0],
+            vec![-13.18, 0.0, 0.0, 0.64]
+        ];
+        let val = lp6(&hullset, &target, &4, &num_agents);
+        println!("r: {:?}", val);
+    }
     match dfas {
         None => {println!("There was an error reading the DFAs from {}", dra_path_val)}
         Some(x) => {
@@ -301,7 +311,7 @@ fn main() {
     }
 
     if run {
-        let w: Vec<f64> = vec![0.49, 0.51, 0., 0., 0.];
+        let w: Vec<f64> = vec![0.0, 0.0, 1.0, 0.0];
         let safe_r = team_mdp.min_exp_tot(&w, &epsilon);
         match safe_r {
             None => {}
