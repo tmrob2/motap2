@@ -1,10 +1,6 @@
 //use itertools::{Itertools, enumerate};
 use clap::{clap_app, Values};
-use lib::{
-    read_mdp_json, MDP, DFA, DFAProductMDP,
-    read_dfa_json, DFAModelCheckingPair, TeamInput, TeamMDP,
-    NonNan, absolute_diff_vect, read_target, Target, Mu, lp5, lp6
-};
+use lib::{read_mdp_json, MDP, DFA, DFAProductMDP, read_dfa_json, DFAModelCheckingPair, TeamInput, TeamMDP, NonNan, absolute_diff_vect, read_target, Target, Mu, lp5, lp6, Rewards};
 use std::fs::File;
 use std::io::Write;
 use petgraph::{dot::Dot};
@@ -292,7 +288,7 @@ fn main() {
             println!("team state: ({},{},{},{})", state.state.s, state.state.q, state.agent, state.task);
         }
     }
-    team_mdp.create_transitions_and_labelling(&team_input);
+    team_mdp.create_transitions_and_labelling(&team_input, &Rewards::POSITIVE);
     team_mdp.assign_task_rewards();
     team_mdp.modify_final_rewards(&team_input);
     if verbose == 2 {
@@ -311,12 +307,13 @@ fn main() {
     }
 
     if run {
-        let w: Vec<f64> = vec![0.0, 0.0, 1.0, 0.0];
+
+        let w: Vec<f64> = vec![0.6, 0.3, 0.1];
         let safe_r = team_mdp.min_exp_tot(&w, &epsilon);
         match safe_r {
             None => {}
             Some((mu, r)) => {
-                /*for s in mu.iter() {
+                for s in mu.iter() {
                     println!(
                         "state: ({},{},{},{}), action: {:?}",
                         s.team_state.state.s,
@@ -327,17 +324,16 @@ fn main() {
                     );
                 }
 
-                 */
+
                 println!("r: {:?}", r);
             }
         }
 
 
-        //let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon);
+
+        //let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon, &Rewards::POSITIVE);
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {

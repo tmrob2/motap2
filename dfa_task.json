@@ -1,0 +1,16 @@
+[{
+  "states": [0,1,2,3],
+  "initial": 0,
+  "sigma": ["initiate", "ready", "exit", "sprint", ""],
+  "delta": [
+    {"q":  0, "w": ["ready", "exit", "sprint", ""], "q_prime": 0},
+    {"q":  0, "w": ["initiate"], "q_prime": 1},
+    {"q":  1, "w": ["ready", "initiate", ""], "q_prime": 1},
+    {"q":  1, "w": ["exit"], "q_prime":  3},
+    {"q":  1, "w": ["sprint"], "q_prime": 2},
+    {"q":  2, "w":  ["initiate", "ready", "exit", "sprint", ""], "q_prime":  2},
+    {"q":  3, "w":  ["initiate", "ready", "exit", "sprint", ""], "q_prime":  3}
+  ],
+  "acc": [2],
+  "dead": [3]
+}]

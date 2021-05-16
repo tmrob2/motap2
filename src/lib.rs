@@ -960,21 +960,27 @@ impl DFAProductMDP {
         let mut state_modifications: HashSet<DFAModelCheckingPair> = HashSet::new();
         let mut label_modifications: HashSet<DFAProductLabellingPair> = HashSet::new();
         for state in self.states.iter().
-            filter(|x| dfa.acc.iter().all(|y| *y != x.q)) {
+            filter(|x| dfa.dead.iter().all(|y| *y != x.q)) {
             for transition in self.transitions.iter_mut().
                 filter(|x| x.sq == *state &&
                     x.sq_prime.iter().
-                        any(|xx| dfa.acc.iter().
+                        any(|xx| dfa.dead.iter().
                             any(|yy| *yy == xx.state.q))) {
                 //println!("observed transitions for state: {:?}", transition);
                 for sq_prime in transition.sq_prime.iter_mut().
-                    filter(|x| dfa.acc.iter().any(|y| *y == x.state.q)){
-                    transition_modifications.push(DFAProductTransition {
-                        sq: DFAModelCheckingPair { s: 999, q: sq_prime.state.q },
-                        a: "tau".to_string(),
-                        sq_prime: vec![DFATransitionPair{ state: DFAModelCheckingPair { s: sq_prime.state.s, q: sq_prime.state.q }, p: 1.0 }],
-                        reward: transition.reward
-                    });
+                    filter(|x| dfa.dead.iter().any(|y| *y == x.state.q)){
+                    if transition_modifications.iter().all(|x| x.sq != DFAModelCheckingPair {
+                        s: 999,
+                        q: sq_prime.state.q
+                    } && *sq_prime != DFATransitionPair{ state: DFAModelCheckingPair { s: sq_prime.state.s, q: sq_prime.state.q }, p: 1.0 }) {
+                        transition_modifications.push(DFAProductTransition {
+                            sq: DFAModelCheckingPair { s: 999, q: sq_prime.state.q },
+                            a: "tau".to_string(),
+                            sq_prime: vec![DFATransitionPair{ state: DFAModelCheckingPair { s: sq_prime.state.s, q: sq_prime.state.q }, p: 1.0 }],
+                            reward: transition.reward
+                        });
+                    }
+
                     sq_prime.state.s = 999; //  change the transition state to s*=999 coded
                     state_modifications.insert(DFAModelCheckingPair {
                         s: 999,
@@ -1060,23 +1066,6 @@ impl TeamInput {
     }
 }
 
-/// Filters transitions for the current agent and task
-fn filter_states<'a>(input: &'a [TeamState], team_transtions: &'a [TeamTransition],
-                     i: &'a usize, j: &'a usize) -> impl Iterator<Item = &'a TeamState> {
-    let mut switch_states: Vec<TeamState> = Vec::new();
-    for transition in team_transtions.iter().
-        filter(|x| x.from.agent == *i && x.from.task == *j && x.a == "swi"){
-        for state in transition.to.iter() {
-            switch_states.push(state.state.clone());
-            println!("from ({},{},{},{}), to state: ({},{},{},{})",
-                     transition.from.state.s, transition.from.state.q, transition.from.agent, transition.from.task,
-                     state.state.state.s, state.state.state.q, state.state.agent, state.state.task
-            );
-        }
-    }
-    input.iter().filter(move |x| (x.agent == *i && x.task == *j) || (switch_states.iter().any(|z| *z == **x)))
-}
-
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct TeamState {
     pub state: DFAModelCheckingPair,
@@ -1158,6 +1147,11 @@ impl TeamInitState {
     }
 }
 
+pub enum Rewards {
+    NEGATIVE,
+    POSITIVE
+}
+
 pub struct TeamMDP {
     pub initial: TeamState,
     pub states: Vec<TeamState>,
@@ -1223,7 +1217,11 @@ impl TeamMDP {
         };
     }
 
-    pub fn create_transitions_and_labelling(&mut self, team_input: &Vec<TeamInput>) {
+    pub fn create_transitions_and_labelling(&mut self, team_input: &Vec<TeamInput>, rewards_type: &Rewards) {
+        let rewards_coeff: f64 = match rewards_type {
+            Rewards::POSITIVE => 1.0,
+            Rewards::NEGATIVE => -1.0
+        };
         for state in self.states.iter() {
             for input in team_input.iter().
                 filter(|x| x.task == state.task && x.agent == state.agent) {
@@ -1250,7 +1248,7 @@ impl TeamMDP {
                     if state_label.iter().all(|x| *x != "suc" && *x != "fai") {
                         //println!("state: {:?}, agent: {}, task: {} contains no completion labels", state.state, state.agent, state.task);
                         if transition.reward != 0f64 && transition.a != "tau" {
-                            rewards[input.agent] = -1.0 * transition.reward;
+                            rewards[input.agent] = rewards_coeff * transition.reward;
                         }
                     }
                     //println!("debug rewards: {:?}", rewards);
@@ -1445,6 +1443,9 @@ impl TeamMDP {
             yagentbar.push(i_agent_y);
         }
 
+        let indexed_states: Vec<(usize, &TeamState)> = self.states.iter().enumerate().
+            map(|(i, x)| (i, x)).collect();
+
         xtotexpcostbar = vec![0.0; self.states.len()];
         ytotexpcostbar = vec![0.0; self.states.len()];
 
@@ -1472,25 +1473,27 @@ impl TeamMDP {
             yagentbar.push(i_agent_y);
         }
          */
+        let test_state = TeamState {
+            state: DFAModelCheckingPair { s: 0, q: 2 },
+            agent: 1,
+            task: 0
+        };
+
+        let mut counter: u32 = 0;
 
         for j in (0..self.num_tasks).rev() {
             for i in (0..self.num_agents).rev() {
                 let mut epsilon: f64 = 1.0;
                 while epsilon > *eps {
                     // Only task states are referenced in the total cost calculation
-                    for (k, state) in self.states.iter().enumerate().
+                    for (k, state) in indexed_states.iter().
                         filter(|(_k, x)| x.agent == i && x.task == j) {
-                        // we still need to calculate the overall position index for mu
-                        let x_s_index: usize = k;
+                        let x_s_index: usize = *k;
                         //let x_agent_index: usize = agent_states[i].iter().position(|(_k, x)| x == state).unwrap();
                         let mut min_action_values: Vec<(String, f64)> = Vec::new();
 
-                        let print_option: bool = self.transitions.iter().
-                            filter(|x| x.from == *state).
-                            any(|x| x.a == "swi" && x.from.agent == 0 && x.from.task == 1);
-
-
-                        for transition in self.transitions.iter().filter(|x| x.from == *state) {
+                        for transition in self.transitions.iter().
+                            filter(|x| x.from == **state) {
                             let transition_reward = arr1(&transition.reward);
                             let scalar_weight_rewards = weight.dot(&transition_reward);
                             let mut sum_vect: Vec<f64> = vec![0.0; transition.to.len()];
@@ -1498,17 +1501,22 @@ impl TeamMDP {
                             for (k2, sprime) in transition.to.iter().enumerate() {
                                 let x_sprime_index: usize = self.states.iter().
                                     position(|x| *x == sprime.state).unwrap();
-                                sum_vect[k2] = sprime.p * xtotexpcostbar[j][x_sprime_index];
+                                sum_vect[k2] = sprime.p * xtotexpcostbar[x_sprime_index];
 
-                                if print_option {
+
+                                if **state == test_state {
+
                                     println!(
                                         "P(s: ({},{},{},{}), a: {} -> s': ({},{},{},{})) = {}",
                                         state.state.s, state.state.q,state.agent, state.task,
                                         transition.a,
                                         sprime.state.state.s, sprime.state.state.q, sprime.state.agent, sprime.state.task,
-                                        sprime.p * xtotexpcostbar[j][x_sprime_index]
-                                    )
+                                        sprime.p * xtotexpcostbar[x_sprime_index]
+                                    );
+
+
                                 }
+
 
 
                             }
@@ -1519,31 +1527,70 @@ impl TeamMDP {
                         let mut v: Vec<_> = min_action_values.iter().
                             map(|(z, x)| (z, NonNan::new(*x).unwrap())).collect();
                         v.sort_by_key(|key| key.1);
-                        let max_pair = v.last().unwrap();
-                        let max_val = max_pair.1.inner();
-                        let arg_max = max_pair.0;
-                        ytotexpcostbar[j][k] = max_val;
+                        let mut min_pair: &(&String, NonNan) = &v[0];
+                        let mut min_val: f64 = min_pair.1.inner();
+                        /*
+                        if i == self.num_agents - 1 {
+                            match v.iter().enumerate().find(|(k, (x, y))| **x == "swi") {
+                                None => {}
+                                Some((k, (x, y))) => {
+                                    if y.inner() - v.last().unwrap().1.inner() <= *eps {
+                                        max_pair = &v[k];
+                                        max_val = y.inner();
+                                    }
+                                }
+                            }
+                        }
 
-                        if print_option {
+                         */
+                        let arg_max = min_pair.0;
+                        ytotexpcostbar[*k] = min_val;
+
+
+                        if **state == test_state {
+
                             println!("agent: {}, task: {}", i, j);
                             println!("action val choice: {:?}", v);
-                            println!("action chosen: {}", arg_max)
+                            println!("action chosen: {}", arg_max);
+
                         }
 
 
+
+
                         mu[x_s_index].action = Some(arg_max.to_string());
-                        mu[x_s_index].team_state = state.clone();
-                        mu[x_s_index].task_local_index = k;
+                        mu[x_s_index].team_state = *state.clone();
+                        mu[x_s_index].task_local_index = *k;
                         mu[x_s_index].agent_local_index = x_s_index;
                     }
-                    let y_bar_diff = absolute_diff_vect(&xtotexpcostbar[j], &ytotexpcostbar[j]);
+                    let y_bar_diff = absolute_diff_vect(&xtotexpcostbar, &ytotexpcostbar);
                     let mut y_bar_diff_max_vect: Vec<NonNan> = y_bar_diff.iter().
                         map(|x| NonNan::new(*x).unwrap()).collect();
                     y_bar_diff_max_vect.sort();
                     epsilon = y_bar_diff_max_vect.last().unwrap().inner();
                     //println!("eps: {}", epsilon);
-                    xtotexpcostbar[j] = ytotexpcostbar[j].to_vec();
+                    xtotexpcostbar = ytotexpcostbar.to_vec();
                 }
+
+
+                /*
+                if i == 1 && j == 1 {
+                    for s in mu.iter() {
+                        println!(
+                            "state: ({},{},{},{}), action: {:?}",
+                            s.team_state.state.s,
+                            s.team_state.state.q,
+                            s.team_state.agent,
+                            s.team_state.task,
+                            s.action
+                        );
+                    }
+                    return None
+                }
+
+                 */
+
+
                 epsilon = 1.0;
                 while epsilon > *eps {
                     for (k, state) in self.states.iter().enumerate().
@@ -1564,33 +1611,65 @@ impl TeamMDP {
                             let mut sum_vect_agent: Vec<Vec<f64>> = vec![vec![0.0; transition.to.len()]; self.num_agents];
                             let mut sum_vec_task: Vec<Vec<f64>> = vec![vec![0.0; transition.to.len()]; self.num_tasks];
                             for (l, sprime) in transition.to.iter().enumerate() {
-                                //if (i < self.num_agents - 1) || (i == self.num_agents - 1 && *action != "swi") {
                                 let x_sprime_agent_index: usize = self.states.iter().
                                     position(|x| *x == sprime.state).unwrap();
                                 let x_sprime_task_index: usize = self.states.iter().
                                     position(|x| *x == sprime.state).unwrap();
                                 for agent in 0..self.num_agents {
                                     sum_vect_agent[agent][l] = sprime.p * xagentbar[agent][x_sprime_agent_index];
+
+                                    if *state == test_state {
+                                        println!(
+                                            "(s: ({},{},{},{}), a: {}), s': ({},{},{},{}): cost = {}",
+                                            state.state.s, state.state.q, state.agent, state.task,
+                                            transition.a,
+                                            sprime.state.state.s, sprime.state.state.q, sprime.state.agent, sprime.state.task,
+                                            sprime.p * xagentbar[agent][x_sprime_task_index]
+                                        );
+                                    }
+
+
                                 }
                                 for task in 0..self.num_tasks {
                                     sum_vec_task[task][l] = sprime.p * xtaskbar[task][x_sprime_task_index];
-                                }
 
-                                /*
-                                } else {
-                                    let x_sprime_agent_index: usize = agent_states[sprime.state.agent].iter().
-                                        position(|(_ind, x)| *x == sprime.state).unwrap();
-                                    sum_vect_agent[l] = sprime.p * xagentbar[state.agent][x_sprime_agent_index];
+                                    if *state == test_state {
+                                        println!(
+                                            "(s: ({},{},{},{}), a: {}), s': ({},{},{},{}): p = {}",
+                                            state.state.s, state.state.q, state.agent, state.task,
+                                            transition.a,
+                                            sprime.state.state.s, sprime.state.state.q, sprime.state.agent, sprime.state.task,
+                                            sprime.p * xtaskbar[task][x_sprime_task_index]
+                                        )
+                                    }
+
+
                                 }
-                                */
                             }
                             for agent in 0..self.num_agents {
                                 let p_trans_agent: f64 = sum_vect_agent[agent].iter().sum();
                                 yagentbar[agent][agent_state_index] = transition.reward[agent] + p_trans_agent;
+
+                                if *state == test_state {
+                                    println!(
+                                        "reward: {}, y_ = {}", transition.reward[agent],
+                                        transition.reward[agent] + p_trans_agent);
+                                }
+
+
                             }
                             for task in 0..self.num_tasks {
                                 let p_trans_task: f64 = sum_vec_task[task].iter().sum();
                                 ytaskbar[task][k] = transition.reward[self.num_agents + task] + p_trans_task;
+
+                                if *state == test_state {
+                                    println!(
+                                        "reward: {}, y_ = {}",transition.reward[self.num_agents + task],
+                                        transition.reward[self.num_agents + task] + p_trans_task
+                                    );
+                                }
+
+
                             }
                         }
                     }
@@ -1602,11 +1681,12 @@ impl TeamMDP {
                         let mut diff_agent_nonan: Vec<NonNan> = diff_agent.iter().
                             map(|x| NonNan::new(*x).unwrap()).collect();
                         diff_agent_nonan.sort();
-                        let max_val_agent = diff_agent_nonan.last().unwrap().inner();
-                        if max_val_agent > eps_inner {
-                            eps_inner = max_val_agent;
+                        let min_val_agent = diff_agent_nonan[0].inner();
+                        if min_val_agent > eps_inner {
+                            eps_inner = min_val_agent;
                         }
                         xagentbar[agent] = yagentbar[agent].to_vec();
+                        //println!("yagentbar obj:{} = {:?}", agent, yagentbar[agent]);
                     }
 
                     for task in 0..self.num_tasks {
@@ -1620,12 +1700,27 @@ impl TeamMDP {
                             eps_inner = max_val_task;
                         }
                         xtaskbar[task] = ytaskbar[task].to_vec();
+                        //println!("ytaskbar obj:{} = {:?}", task, ytaskbar[task]);
                     }
                     //println!("epsilon bar: {}", epsilon);
                     epsilon = eps_inner;
+                    /*
+                    if i == 0 && j == 0 {
+                        counter += 1;
+                        if counter > 2 {
+                            return None;
+                        }
+                    }
+
+                     */
+
+
                 }
+                //return None
             }
         }
+
+
 
         let mut r: Vec<f64> = vec![0.0; self.num_agents + self.num_tasks];
         for k in 0..(self.num_tasks + self.num_agents) {
@@ -1645,7 +1740,7 @@ impl TeamMDP {
                 let init_task_state: TeamState = TeamState {
                     state: DFAModelCheckingPair { s: init_state.state.s, q: init_state.state.q },
                     agent: init_state.agent,
-                    task: k - self.num_agents
+                    task: init_state.task
                 };
                 //println!("init state: ({},{},{},{})", init_task_state.state.s, init_task_state.state.q, init_task_state.agent, init_task_state.task);
                 let index: usize = self.states.iter().position(|x| *x == init_task_state).unwrap();
@@ -1653,7 +1748,7 @@ impl TeamMDP {
             }
         }
 
-
+        /*
         for m in mu.iter() {
             print!(
                 "state: ({},{},{},{}), action: {:?}, ",
@@ -1666,9 +1761,9 @@ impl TeamMDP {
                 } else {
                     if k < (self.num_agents + self.num_tasks) {
                         //println!("k: {}, task: {}", k, k - self.num_agents);
-                        print!("a{} cost={1:.2$}, ", k, ytaskbar[k - self.num_agents][m.agent_local_index], 3);
+                        print!("a{} task={1:.2$}, ", k, ytaskbar[k - self.num_agents][m.agent_local_index], 3);
                     } else {
-                        print!("a{} cost={1:.2$}", k, ytaskbar[k - self.num_agents][m.agent_local_index], 3);
+                        print!("a{} task={1:.2$}", k, ytaskbar[k - self.num_agents][m.agent_local_index], 3);
                     }
                 }
 
@@ -1676,6 +1771,7 @@ impl TeamMDP {
             println!();
         }
 
+         */
         Some((mu, r))
     }
 
@@ -1723,17 +1819,25 @@ impl TeamMDP {
         }
     }
 
-    pub fn multi_obj_sched_synth(&self, target: &Vec<f64>, eps: &f64) -> Option<Alg1Output> {
+    pub fn multi_obj_sched_synth(&self, target: &Vec<f64>, eps: &f64, rewards: &Rewards) -> Option<Alg1Output> {
         let output = Alg1Output { hullset: vec![], mu: vec![] };
         let mut hullset: Vec<Vec<f64>> = Vec::new();
         let mut mu_vect: Vec<Vec<Mu>> = Vec::new();
 
         println!("num tasks: {}, num agents {}", self.num_tasks, self.num_agents);
 
-        let mut extreme_points: Vec<Vec<f64>> = vec![vec![0.0; self.num_agents + self.num_tasks]; self.num_agents + self.num_tasks + 1];
+        let mut extreme_points: Vec<Vec<f64>> = vec![vec![0.0; self.num_agents + self.num_tasks]; self.num_agents + self.num_tasks];
 
         for k in 0..(self.num_agents + self.num_tasks) {
-            extreme_points[k][k] = 1.0;
+            if k < self.num_agents {
+                extreme_points[k][k] = 1.0;
+            } else {
+                for l in 0..self.num_agents{
+                    extreme_points[k][l] = 0.1 / self.num_agents as f64;
+                }
+                extreme_points[k][k] = 0.9;
+            }
+
             let w_extr: &Vec<f64> = &extreme_points[k];
             println!("w: {:?}", w_extr);
             let safe_ret = self.min_exp_tot(&w_extr, eps);
@@ -1744,17 +1848,7 @@ impl TeamMDP {
                 None => panic!("No value was returned from the maximisation")
             }
         }
-        for i in 0..(self.num_tasks + self.num_agents) {
-            extreme_points[self.num_tasks + self.num_agents][i] = 1.0 / (self.num_tasks + self.num_agents) as f64;
-            let w_extr: &Vec<f64> = &extreme_points[self.num_agents + self.num_tasks];
-            let safe_ret = self.min_exp_tot(&w_extr, eps);
-            match safe_ret {
-                Some((mu_new, r)) => {
-                    hullset.push(r);
-                },
-                None => panic!("No value was returned from the maximisation")
-            }
-        }
+
         println!("extreme points: ");
         for k in hullset.iter() {
             print!("p: [");
@@ -1774,11 +1868,14 @@ impl TeamMDP {
         let t_arr1 = arr1(target);
         let mut counter: u32 = 1;
         while !member_closure {
-            let w_new = lp6(&hullset, target, &dim, &self.num_agents);
+            //let w_new = lp6(&hullset, target, &dim, &self.num_agents);
+            let w_new = lp5(&hullset, target, &dim);
             println!("w' :{:?}", w_new);
-            for x in hullset.iter() {
+            /*for x in hullset.iter() {
                 println!("x: {:?}", x);
             }
+
+             */
             let safe_ret = self.min_exp_tot(&w_new, eps);
             match safe_ret {
                 Some((mu_new, r)) => {
@@ -1787,24 +1884,29 @@ impl TeamMDP {
                     let r_arr1 = arr1(&r);
                     let wr_dot = weight_arr1.dot(&r_arr1);
                     let wt_dot = weight_arr1.dot(&t_arr1);
-                    if wr_dot < wt_dot {
+
+                    if wr_dot > wt_dot {
                         println!("Multi-objective criteria not possible");
                         return None;
                     }
                     hullset.push(r);
                     mu_vect.push(mu_new);
-                    if member_closure_set(&hullset, target) {
+                    if member_closure_set(&hullset, target, rewards) {
                         println!("member set found");
-                        println!("r: {:?}", hullset.last().unwrap());
+                        //println!("r: {:?}", hullset.last().unwrap());
                         member_closure = true
                     }
                 },
                 None => panic!("No value was returned from the maximisation")
             }
-            if counter >= 2 {
+
+
+            if counter >= 5 {
                 return None;
             }
             counter += 1;
+
+
         }
         Some(output)
     }
@@ -1813,6 +1915,7 @@ impl TeamMDP {
 pub fn lp5(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
     //h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize
     let env = Env::new("logfile.log").unwrap();
+    let scale: f64 = 100.;
 
     // create an empty model
     let mut model = env.new_model("model1").unwrap();
@@ -1820,7 +1923,7 @@ pub fn lp5(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
     // add vars
     let mut v: HashMap<String, gurobi::Var> = HashMap::new();
     for i in 0..*dim {
-        v.insert(format!("w{}", i), model.add_var(&*format!("w{}", i), Continuous, 0.0, 0.0, 1.0, &[], &[]).unwrap());
+        v.insert(format!("w{}", i), model.add_var(&*format!("w{}", i), Continuous, 0.0, 1.0, scale, &[], &[]).unwrap());
     }
     let d = model.add_var("d", Continuous, 0.0, -gurobi::INFINITY, gurobi::INFINITY, &[], &[]).unwrap();
 
@@ -1846,7 +1949,7 @@ pub fn lp5(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
     let mut w_expr = LinExpr::new();
     let coefs: Vec<f64> = vec![1.0; *dim];
     let final_expr = w_expr.add_terms( &coefs[..], &w_vars[..]);
-    model.add_constr("w_final", final_expr, gurobi::Equal, 1.0);
+    model.add_constr("w_final", final_expr, gurobi::Equal, scale);
 
     model.update().unwrap();
 
@@ -1865,7 +1968,8 @@ pub fn lp5(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
         vars.push(var.clone());
     }
     let val = model.get_values(attr::X, &vars[..]).unwrap();
-    val
+    let val_scaled: Vec<f64> = val.iter().map(|x| *x / scale).collect();
+    val_scaled
 }
 
 pub fn lp6(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize, agents: &usize) -> Vec<f64> {
@@ -1990,10 +2094,13 @@ pub fn lp4(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
 
  */
 
-pub fn member_closure_set(hull_set: &Vec<Vec<f64>>, t: &Vec<f64>) -> bool {
+pub fn member_closure_set(hull_set: &Vec<Vec<f64>>, t: &Vec<f64>, direction: &Rewards) -> bool {
     for x in hull_set.iter() {
-        let upward_closure = t.iter().zip(x).all(|(t,r)| r >= t);
-        if upward_closure {
+        let closure = match direction {
+            Rewards::POSITIVE => t.iter().zip(x).all(|(t,r)| r <= t),
+            Rewards::NEGATIVE => t.iter().zip(x).all(|(t,r)| r >= t)
+        };
+        if closure {
             return true
         }
     }
