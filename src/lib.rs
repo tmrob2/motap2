@@ -1501,7 +1501,7 @@ impl TeamMDP {
                 //if i == 1 && j == 1 {
                 for (x,state,z) in task_indexed_states[j].iter() {
                     let action = mu.iter().find(|x| x.team_state == **state).unwrap();
-                    println!("state: ({},{},{},{}), action: {:?}, value: {}", state.state.s, state.state.q, state.agent, state.task, action.action, ytotexpcostbar[j][*x])
+                    //println!("state: ({},{},{},{}), action: {:?}, value: {}", state.state.s, state.state.q, state.agent, state.task, action.action, ytotexpcostbar[j][*x])
                 }
 
                 epsilon = 1.0;
