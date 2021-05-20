@@ -307,7 +307,17 @@ fn main() {
     }
 
     if run {
-        let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon, &Rewards::POSITIVE);
+        let num: f64 = 1.0 / (team_mdp.num_tasks + team_mdp.num_agents) as f64;
+        //let w = vec![num; team_mdp.num_tasks + team_mdp.num_agents];
+        let w = vec![0.2000001, 0.1999999, 0.2, 0.13, 0.13, 0.13];
+        let val = team_mdp.min_exp_tot(&w, &epsilon);
+        match val {
+            None => {}
+            Some(x) => {
+                println!("val: {:?}", x.1);
+            }
+        }
+        /*let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon, &Rewards::POSITIVE);
         match output {
             Some(x) => {
                 println!("v: {:?}",x.v);
@@ -318,6 +328,8 @@ fn main() {
             },
             _ => {println!("No output from scheduler synthesis!");}
         }
+
+         */
     }
 }
 

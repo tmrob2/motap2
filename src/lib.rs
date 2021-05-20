@@ -14,7 +14,7 @@ use petgraph::{Graph, graph::NodeIndex};
 use std::num::ParseIntError;
 use petgraph::algo::{kosaraju_scc, has_path_connecting, all_simple_paths};
 use std::hash::Hash;
-use ndarray::arr1;
+use ndarray::{arr1, NdIndex};
 //use minilp::{Problem, OptimizationDirection, ComparisonOp, Variable, LinearExpr};
 //use lp_modeler::dsl::*;
 //use lp_modeler::solvers::{SolverTrait, CbcSolver, Solution, NativeCbcSolver, GurobiSolver};
@@ -1427,9 +1427,11 @@ impl TeamMDP {
         //let mut task_states: Vec<Vec<(usize, TeamState)>> = Vec::new();
         // original => agent_states: Vec<Vec<(usize, TeamState)>> = Vec::new();
         //let mut agent_states: Vec<Vec<(usize, &TeamState)>> = self.states.iter().enumerate().map(|(i, x)|(i, x)).collect();
-        let mut xtotexpcostbar: Vec<Vec<f64>> = Vec::new();
-        let mut ytotexpcostbar: Vec<Vec<f64>> = Vec::new();
-        let mut task_indexed_states: Vec<Vec<(usize, &TeamState, usize)>> = Vec::new();
+        let mut xtotexpcostbar: Vec<f64> = vec![0.0; self.states.len()];
+        let mut ytotexpcostbar: Vec<f64> = vec![0.0; self.states.len()];
+        //let mut task_indexed_states: Vec<Vec<(usize, &TeamState, usize)>> = Vec::new();
+        let indexed_states : Vec<(usize, &TeamState)> = self.states.iter().enumerate().
+            map(|(i,x)| (i, x)).collect();
         let mut xtaskbar: Vec<Vec<f64>> = Vec::new();
         let mut ytaskbar: Vec<Vec<f64>> = Vec::new();
         let mut xagentbar: Vec<Vec<f64>> = Vec::new();
@@ -1444,23 +1446,26 @@ impl TeamMDP {
         }
 
         for j in (0..self.num_tasks) {
-            let indexed_states: Vec<(usize, &TeamState, usize)> = self.states.iter().enumerate().
+            /*let indexed_states: Vec<(usize, &TeamState, usize)> = self.states.iter().enumerate().
                 filter(|(z, x)| x.task == j).enumerate().
                 map(|(z, (k, x))| (z, x, k)).collect();
             xtotexpcostbar.push(vec![0.0; indexed_states.len()]);
             ytotexpcostbar.push(vec![0.0; indexed_states.len()]);
             task_indexed_states.push(indexed_states);
+
+             */
             xtaskbar.push(vec![0.0; self.states.len()]);
             ytaskbar.push(vec![0.0; self.states.len()]);
         }
+
 
         for j in (0..self.num_tasks).rev() {
             for i in (0..self.num_agents).rev() {
                 let mut epsilon: f64 = 1.0;
                 while epsilon > *eps {
                     // Only task states are referenced in the total cost calculation
-                    for (k, state, z) in task_indexed_states[j].iter().
-                        filter(|(_k, x, _z)| x.agent == i) {
+                    for (k, state) in indexed_states.iter().
+                        filter(|(_k, x)| x.agent == i && x.task == j) {
                         let mut min_action_values: Vec<(String, f64)> = Vec::new();
 
                         for transition in self.transitions.iter().
@@ -1470,13 +1475,19 @@ impl TeamMDP {
                             let mut sum_vect: Vec<f64> = vec![0.0; transition.to.len()];
                             //let mut test_state_reached: bool = false;
                             for (k2, sprime) in transition.to.iter().enumerate() {
-                                let x_sprime_index: usize = task_indexed_states[sprime.state.task].iter().
-                                    position(|(_y,x,_z)| **x == sprime.state).unwrap();
-                                sum_vect[k2] = sprime.p * xtotexpcostbar[sprime.state.task][x_sprime_index];
+                                let x_sprime_index: usize = indexed_states.iter().
+                                    position(|(_y,x)| **x == sprime.state).unwrap();
+                                sum_vect[k2] = sprime.p * xtotexpcostbar[x_sprime_index];
+                                if i == 0 && j == 0 && state.state.s == 0 && state.state.q == 0 {
+                                    println!("state: ({},{},{},{}): sum: {:?}", state.state.s, state.state.q, state.agent, state.task, sum_vect);
+                                }
                             }
                             let sum_vect_sum: f64 = sum_vect.iter().sum();
                             let action_reward = scalar_weight_rewards + sum_vect_sum;
                             min_action_values.push((transition.a.to_string(), action_reward));
+                            if i == 0 && j == 0 && state.state.s == 0 && state.state.q == 0 {
+                                println!("state: ({},{},{},{}): min act val: {:?}", state.state.s, state.state.q, state.agent, state.task, min_action_values);
+                            }
                         }
                         let mut v: Vec<_> = min_action_values.iter().
                             map(|(z, x)| (z, NonNan::new(*x).unwrap())).collect();
@@ -1484,24 +1495,31 @@ impl TeamMDP {
                         let mut min_pair: &(&String, NonNan) = &v[0];
                         let mut min_val: f64 = min_pair.1.inner();
                         let arg_max = min_pair.0;
-                        ytotexpcostbar[j][*k] = min_val;
-                        mu[*z].action = Some(arg_max.to_string());
-                        mu[*z].team_state = *state.clone();
-                        mu[*z].task_local_index = *z;
-                        mu[*z].agent_local_index = *z;
+                        ytotexpcostbar[*k] = min_val;
+                        mu[*k].action = Some(arg_max.to_string());
+                        mu[*k].team_state = *state.clone();
+                        mu[*k].task_local_index = *k;
+                        mu[*k].agent_local_index = *k;
                     }
-                    let y_bar_diff = absolute_diff_vect(&xtotexpcostbar[j], &ytotexpcostbar[j]);
+                    let y_bar_diff = absolute_diff_vect(&xtotexpcostbar, &ytotexpcostbar);
                     let mut y_bar_diff_max_vect: Vec<NonNan> = y_bar_diff.iter().
                         map(|x| NonNan::new(*x).unwrap()).collect();
                     y_bar_diff_max_vect.sort();
                     epsilon = y_bar_diff_max_vect.last().unwrap().inner();
                     //println!("eps: {}", epsilon);
-                    xtotexpcostbar[j] = ytotexpcostbar[j].to_vec();
+                    xtotexpcostbar = ytotexpcostbar.to_vec();
                 }
-                //if i == 1 && j == 1 {
-                for (x,state,z) in task_indexed_states[j].iter() {
-                    let action = mu.iter().find(|x| x.team_state == **state).unwrap();
-                    //println!("state: ({},{},{},{}), action: {:?}, value: {}", state.state.s, state.state.q, state.agent, state.task, action.action, ytotexpcostbar[j][*x])
+                if i == 0 && j == 0 {
+                    for (x,state) in indexed_states.iter() {
+                        let action = mu.iter().find(|x| x.team_state == **state).unwrap();
+                        println!(
+                            "state: ({},{},{},{}), action: {:?}, value: {}, w: {:?}",
+                            state.state.s, state.state.q, state.agent, state.task,
+                            action.action,
+                            ytotexpcostbar[*x],
+                            w
+                        )
+                    }
                 }
 
                 epsilon = 1.0;
@@ -1663,25 +1681,25 @@ impl TeamMDP {
 
         for k in 0..(self.num_agents + self.num_tasks) {
             if k < self.num_agents {
-                extreme_points[k][k] = 0.9;
+                extreme_points[k][k] = 0.7;
                 for l in 0..k {
-                    extreme_points[k][l] = 0.1 / (self.num_agents - 1) as f64
+                    extreme_points[k][l] = 0.3 / (self.num_agents - 1) as f64
                 }
                 if k < self.num_agents - 1 {
                     for l in (k+1)..self.num_agents {
-                        extreme_points[k][l] = 0.1 / (self.num_agents - 1) as f64
+                        extreme_points[k][l] = 0.3 / (self.num_agents - 1) as f64
                     }
                 }
 
             } else {
                 for l in 0..self.num_agents{
-                    extreme_points[k][l] = 0.1 / self.num_agents as f64;
+                    extreme_points[k][l] = 0.3 / self.num_agents as f64;
                 }
-                extreme_points[k][k] = 0.9;
+                extreme_points[k][k] = 0.7;
             }
 
             let w_extr: &Vec<f64> = &extreme_points[k];
-            //println!("w: {:?}", w_extr);
+            println!("w: {:?}", w_extr);
             let safe_ret = self.min_exp_tot(&w_extr, eps);
             match safe_ret {
                 Some((mu_new, r)) => {
@@ -1711,7 +1729,7 @@ impl TeamMDP {
         let t_arr1 = arr1(target);
         let mut counter: u32 = 1;
         while !member_closure {
-            let w_new = lp5(&hullset, target, &dim);
+            let w_new = lp6(&hullset, target, &dim);
             //let w_new = lp5(&hullset, target, &dim);
             println!("w' :{:?}", w_new);
             /*for x in hullset.iter() {
@@ -1905,14 +1923,16 @@ pub fn lp5(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
     let mut env = gurobi::Env::new("").unwrap();
     env.set(param::OutputFlag, 0).unwrap();
     env.set(param::LogToConsole, 0).unwrap();
+    env.set(param::FeasibilityTol,10e-9).unwrap();
+    env.set(param::NumericFocus,2).unwrap();
     let mut model = Model::new("model1", &env).unwrap();
-    let scale: f64 = 1000000000f64;
+    let scale: f64 = 1f64;
 
     // create an empty model
     //let mut model = env.new_model("model1").unwrap();
 
     // add vars
-    let lb: f64 = scale / 1000f64;
+    let lb: f64 = scale / 10000f64;
     let mut v: HashMap<String, gurobi::Var> = HashMap::new();
     for i in 0..*dim {
         v.insert(format!("w{}", i), model.add_var(
@@ -1956,7 +1976,8 @@ pub fn lp5(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
     //model.write("logfile.lp").unwrap();
     
     model.optimize().unwrap();
-    //println!("model status: {:?}", model.status());
+    println!("model status: {:?}", model.status());
+    println!("kappa: {:?}", model.get(gurobi::attr::KappaExact).unwrap());
     //println!("model obj: {:?}", model.get(gurobi::attr::ObjVal).unwrap());
     let mut vars = Vec::new();
     for i in (0..*dim) {
@@ -1964,13 +1985,17 @@ pub fn lp5(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
         vars.push(var.clone());
     }
     let val = model.get_values(attr::X, &vars[..]).unwrap();
-    let val_scaled: Vec<f64> = val.iter().map(|x| if *x > 0.0 {*x / scale} else {lb / scale }).collect();
+    let val_scaled: Vec<f64> = val.iter().map(|x| *x / scale).collect();
     val_scaled
 }
 
 pub fn lp6(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
-    //h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize
-    let env = Env::new("logfile.log").unwrap();
+    let mut env = gurobi::Env::new("").unwrap();
+    env.set(param::OutputFlag, 0).unwrap();
+    env.set(param::LogToConsole, 0).unwrap();
+    env.set(param::FeasibilityTol,10e-9).unwrap();
+    env.set(param::NumericFocus,2).unwrap();
+    let mut model = Model::new("model1", &env).unwrap();
 
     // create an empty model
     let mut model = env.new_model("model1").unwrap();
@@ -1978,7 +2003,7 @@ pub fn lp6(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
     // add vars
     let mut v: HashMap<String, gurobi::Var> = HashMap::new();
     for i in 0..*dim {
-        v.insert(format!("w{}", i), model.add_var(&*format!("w{}", i), Continuous, 0.0, 0.0, 1.0, &[], &[]).unwrap());
+        v.insert(format!("w{}", i), model.add_var(&*format!("w{}", i), Continuous, 0.0, 0.01, 1.0, &[], &[]).unwrap());
     }
     let d = model.add_var("d", Continuous, 0.0, -gurobi::INFINITY, gurobi::INFINITY, &[], &[]).unwrap();
 
@@ -1992,7 +2017,7 @@ pub fn lp6(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
     let mut counter: u32 = 0;
     for x in h.iter() {
         for (i, y) in x.iter().enumerate() {
-            model.add_constr(&*format!("c{}", counter), &w_vars[i] * (*y - t[i]) - &d * 1.0, ConstrSense::Greater, 0.0);
+            model.add_constr(&*format!("c{}", counter), &w_vars[i] * (t[i] - *y) + &d * 1.0, ConstrSense::Greater, 0.0);
             counter += 1;
         }
     }
@@ -2004,7 +2029,7 @@ pub fn lp6(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Vec<f64> {
 
     model.update().unwrap();
 
-    model.set_objective(&d, gurobi::Maximize).unwrap();
+    model.set_objective(&d, gurobi::Minimize).unwrap();
 
     println!("Model type: {:?}", model.get(gurobi::attr::IsMIP));
 
