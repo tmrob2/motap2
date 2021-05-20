@@ -1,6 +1,6 @@
 //use itertools::{Itertools, enumerate};
 use clap::{clap_app, Values};
-use lib::{read_mdp_json, MDP, DFA, DFAProductMDP, read_dfa_json, DFAModelCheckingPair, TeamInput, TeamMDP, NonNan, absolute_diff_vect, read_target, Target, Mu, lp5, lp6, Rewards};
+use lib::{read_mdp_json, MDP, DFA, DFAProductMDP, read_dfa_json, DFAModelCheckingPair, TeamInput, TeamMDP, NonNan, absolute_diff_vect, read_target, Target, Mu, Rewards, Alg1Output};
 use std::fs::File;
 use std::io::Write;
 use petgraph::{dot::Dot};
@@ -202,8 +202,8 @@ fn main() {
             vec![-6.85, -6.33, 0.8, 0.0],
             vec![-13.18, 0.0, 0.0, 0.64]
         ];
-        let val = lp6(&hullset, &target, &4, &num_agents);
-        println!("r: {:?}", val);
+        //let val = lp6(&hullset, &target, &4, &num_agents);
+        //println!("r: {:?}", val);
     }
     match dfas {
         None => {println!("There was an error reading the DFAs from {}", dra_path_val)}
@@ -307,31 +307,17 @@ fn main() {
     }
 
     if run {
-
-        let w: Vec<f64> = vec![0.6, 0.3, 0.1];
-        let safe_r = team_mdp.min_exp_tot(&w, &epsilon);
-        match safe_r {
-            None => {}
-            Some((mu, r)) => {
-                for s in mu.iter() {
-                    println!(
-                        "state: ({},{},{},{}), action: {:?}",
-                        s.team_state.state.s,
-                        s.team_state.state.q,
-                        s.team_state.agent,
-                        s.team_state.task,
-                        s.action
-                    );
-                }
-
-
-                println!("r: {:?}", r);
-            }
+        let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon, &Rewards::POSITIVE);
+        match output {
+            Some(x) => {
+                println!("v: {:?}",x.v);
+                let graph = team_mdp.dfs_merging(&x.mu, &x.v);
+                let dot = format!("{}", Dot::new(&graph));
+                let mut file = File::create("merged_sched.dot").unwrap();
+                file.write_all(&dot.as_bytes());
+            },
+            _ => {println!("No output from scheduler synthesis!");}
         }
-
-
-
-        //let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon, &Rewards::POSITIVE);
     }
 }
 
