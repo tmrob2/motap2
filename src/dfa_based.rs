@@ -1,6 +1,6 @@
 //use itertools::{Itertools, enumerate};
 use clap::{clap_app, Values};
-use lib::{read_mdp_json, MDP, DFA, DFAProductMDP, read_dfa_json, DFAModelCheckingPair, TeamInput, TeamMDP, NonNan, absolute_diff_vect, read_target, Target, Mu, Rewards, Alg1Output};
+use lib::{read_mdp_json, MDP, DFA, DFAProductMDP, read_dfa_json, DFAModelCheckingPair, TeamInput, TeamMDP, NonNan, absolute_diff_vect, read_target, Target, Mu, Rewards, Alg1Output, Fairness};
 use std::fs::File;
 use std::io::Write;
 use petgraph::{dot::Dot};
@@ -71,6 +71,7 @@ fn main() {
             )
             (@arg RUN: -r --run "run task allocation and planning in a team MDP")
             (@arg EPS: --eps [EPSILON] default_value("0.005"))
+            (@arg REG: --reg [REGULARISATION] default_value("0.1") "A regulation term which helps to share resources among agents")
         )
     ).get_matches();
 
@@ -181,6 +182,13 @@ fn main() {
         (_,_) => 0.0
     };
 
+    let regularisation: f64 = match matches.subcommand() {
+        ("motap", Some(f)) => {
+            f.value_of("REG").unwrap().parse().unwrap()
+        },
+        (_,_) => 0.0
+    };
+
     //let safety_present: bool = false;
     let mut dfa_parse: Vec<(usize, DFA)> = Vec::new();
     let mut mdp_parse: Vec<(usize, MDP)> = Vec::new();
@@ -235,6 +243,7 @@ fn main() {
     for (i, mdp) in mdp_parse.iter() {
         for (j, task) in dfa_parse.iter() {
             let mut local_product: DFAProductMDP = DFAProductMDP::default();
+            local_product.initial = DFAModelCheckingPair{ s: mdp.initial, q: task.initial };
             local_product.create_states(&mdp, task);
             local_product.create_transitions(&mdp, task);
             let mut g = local_product.generate_graph();
@@ -296,6 +305,15 @@ fn main() {
             println!("state: ({},{},{},{}), rewards: {:?}", transition.from.state.s, transition.from.state.q,
             transition.from.agent, transition.from.task, transition.reward);
         }
+        for state in team_mdp.labelling.iter() {
+            println!("state: ({},{},{},{}), label: {:?}", state.state.state.s, state.state.state.q,
+                     state.state.agent, state.state.task, state.label);
+        }
+        for state in team_mdp.task_alloc_states.iter() {
+            println!("state: ({},{},{},{})",
+                     state.state.state.s, state.state.state.q,
+                     state.state.agent, state.state.task);
+        }
     }
     if graph_type > 0 {
         let tg = team_mdp.generate_graph();
@@ -307,9 +325,9 @@ fn main() {
     }
 
     if run {
-        let num: f64 = 1.0 / (team_mdp.num_tasks + team_mdp.num_agents) as f64;
-        //let w = vec![num; team_mdp.num_tasks + team_mdp.num_agents];
-        let w = vec![0.2000001, 0.1999999, 0.2, 0.13, 0.13, 0.13];
+        /*let num: f64 = 1.0 / (team_mdp.num_tasks + team_mdp.num_agents) as f64;
+        let w = vec![num; team_mdp.num_tasks + team_mdp.num_agents];
+        //let w = vec![0.25, 0.25, 0.25, 0.25];
         let val = team_mdp.min_exp_tot(&w, &epsilon);
         match val {
             None => {}
@@ -317,7 +335,19 @@ fn main() {
                 println!("val: {:?}", x.1);
             }
         }
-        /*let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon, &Rewards::POSITIVE);
+        let fair_val = team_mdp.fair_min_exp_tot(&w, &epsilon, &regularisation);
+        match fair_val {
+            None => {}
+            Some((mu, val)) => {
+                for m in mu.iter() {
+                    println!("s: ({},{},{},{}), a: {:?}", m.team_state.state.s, m.team_state.state.q, m.team_state.agent, m.team_state.task, m.action);
+                }
+                println!("fair val: {:?}", val);
+            }
+        }*/
+
+
+        let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon, &Rewards::POSITIVE, &regularisation, &Fairness::FAIR);
         match output {
             Some(x) => {
                 println!("v: {:?}",x.v);
@@ -329,7 +359,7 @@ fn main() {
             _ => {println!("No output from scheduler synthesis!");}
         }
 
-         */
+
     }
 }
 
