@@ -296,7 +296,7 @@ impl TeamMDP {
     /// (task, agent) ordered pair. The hashmap key is the ordered pair, and the value is a
     /// ```TeamStateIndexHelper``` or a struct containing a vector of tuples containing the state space
     /// and the enumerated filtered index of the state.
-    pub fn fair_min_exp_tot<'a>(&self, w: &[f64], eps: &f64, reg: &f64, team_index: &'a HashMap<(usize, usize), TeamStateIndexHelper>) -> Option<(HashMap<&'a TeamState, String>, Vec<f64>)> {
+    pub fn exp_tot_cost<'a>(&self, w: &[f64], eps: &f64, team_index: &'a HashMap<(usize, usize), TeamStateIndexHelper>, rewards: &Rewards) -> Option<(HashMap<&'a TeamState, String>, Vec<f64>)> {
         let mut mu: HashMap<&'a TeamState, String> = HashMap::new();
         let mut r: Vec<f64> = vec![0.0; w.len()];
         let weight = arr1(w);
@@ -305,7 +305,7 @@ impl TeamMDP {
         let test_state = TeamState {
             state: DFAModelCheckingPair { s: 0, q: 0 },
             agent: 0,
-            task: 1
+            task: 0
         };
 
         let mut x_cost_vectors: Vec<Vec<f64>> = vec![Vec::new(); ij_k_mapping.len()];
@@ -360,57 +360,36 @@ impl TeamMDP {
                             }
                             let sum_vect_sum: f64 = sum_vect.iter().fold(0f64, |sum, &val| sum + val);
                             let mut action_reward = scaled_weight_rewards + sum_vect_sum;
-
-                            /*if self.task_alloc_states.iter().any(|x| x.state == **state && j < self.num_tasks - 1) {
-                                // what is the average agent cost at this point
-                                //println!("state: ({},{},{},{}) is a valid task choice between agents", state.state.s, state.state.q, state.agent, state.task);
-                                // what is the total agent cost
-                                //self.task_alloc_states.iter().find(|x| x.state.task == j+1).unwrap();
-                                let previous_alloc_helper = team_index.get(&(j+1, i)).unwrap();
-                                let prev_alloc_state = self.task_alloc_states.iter().find(|x| x.state.task == j + 1 && x.state.agent == i).unwrap();
-                                let prev_alloc_team_index = previous_alloc_helper.state_hashmap.get(&prev_alloc_state.state).unwrap();
-                                let prev_agent_alloc_cost: f64 = x_agent_cost_vector[i][prev_alloc_team_index.team_index];
-                                /*println!("The previous agent allocated cost for state: ({},{},{},{}) was {}",
-                                         prev_alloc_state.state.state.s, prev_alloc_state.state.state.q, prev_alloc_state.state.agent, prev_alloc_state.state.task,
-                                         prev_agent_alloc_cost
-                                );*/
-                                // The next sequence of instructions is to determine the difference between the current agent cost for the current task and the team cost
-                                let prev_cost_state = self.task_alloc_states.iter().find(|x| x.state.agent == i && x.state.task == j + 1).unwrap();
-                                let prev_cost_team_index = previous_alloc_helper.state_hashmap.get(&prev_cost_state.state).unwrap();
-                                let prev_ij_mapping_index = ij_k_mapping.get(&(j+1, i)).unwrap();
-                                let previous_team_cost_value = x_cost_vectors[*prev_ij_mapping_index][prev_cost_team_index.local_index];
-                                let current_agent_cost: f64 = action_reward - previous_team_cost_value;
-                                //println!("The current agent cost for task {} is {}", j, current_agent_cost);
-                                let regularised_reward = reg / (self.num_agents as f64) * action_reward;
-                                //println!("The regularised average agent reward is: {}", regularised_reward);
-                                //println!("The new fair agent alloc cost is: {}", current_agent_cost + prev_agent_alloc_cost + regularised_reward);
-                                action_reward = current_agent_cost + prev_agent_alloc_cost + regularised_reward;
-                            }*/
                             min_action_values.push((transition.a.to_string(), action_reward));
-                            // Testing
-                            //if **state == test_state {
-                            //println!("({},{},{},{}) -> {:?}", state.state.s, state.state.q, state.agent, state.task, min_action_values)
-                            //}
                         }
                         //min_action_values.sort_by(|(a1, a2), (b1, b2)| a1.partial_cmp(b1).unwrap());
                         let mut v: Vec<_> = min_action_values.iter().
                             map(|(z, x)| (z, NonNan::new(*x).unwrap())).collect();
 
                         v.sort_by_key(|key| key.1);
-                        let mut min_pair: &(&String, NonNan) = &v[0];
+                        let mut minmax_pair: &(&String, NonNan) = match rewards {
+                            Rewards::NEGATIVE => &v.last().unwrap(),
+                            Rewards::POSITIVE => &v[0]
+                        };
+                        let mut minmax_val: f64 = minmax_pair.1.inner();
+                        let mut arg_minmax = minmax_pair.0;
 
-                        //let check_mult_argmin: Vec<_> = v.iter().filter(|(k,x)| x.inner() == v[0].1.inner()).map(|(k, x)| (*k,*x)).collect();
-                        /*if check_mult_argmin.len() > 1 && check_mult_argmin.iter().any(|(a, x)| **a == "swi") {
-                        //    println!("min pair: {:?}, mult argmin: {:?}", min_pair, check_mult_argmin);
-                            //let rand_min_pair = check_mult_argmin.choose(& mut rand::thread_rng()).unwrap();
-                            //let rand_min_pair = check_mult_argmin.iter().find(|(a, x)| **a == "swi").unwrap();
-                            println!("state: ({},{},{},{}) -> a: {:?}", state.state.s, state.state.q, state.agent, state.task, check_mult_argmin);
-                            //min_pair = rand_min_pair;
+                        /*if self.task_alloc_states.iter().any(|x| x.state == **state) {
+                            let check_mult_argmin: Vec<_> = v.iter().
+                                filter(|(k,x)| x.inner() == v.last().unwrap().1.inner()).
+                                map(|(k, x)| (*k,*x)).collect();
+                            if check_mult_argmin.len() > 1 && check_mult_argmin.iter().any(|(a, x)| **a == "swi") {
+                                println!("min pair: {:?}, mult argmin: {:?}", minmax_pair, check_mult_argmin);
+                                let rand_min_pair: &(&String, NonNan) = check_mult_argmin.choose(& mut rand::thread_rng()).unwrap();
+                                //let rand_min_pair = check_mult_argmin.iter().find(|(a, x)| **a == "swi").unwrap();
+                                println!("state: ({},{},{},{}) -> a: {:?}", state.state.s, state.state.q, state.agent, state.task, check_mult_argmin);
+                                minmax_val = rand_min_pair.1.inner();
+                                arg_minmax = rand_min_pair.0;
+                            }
                         }*/
-                        let mut min_val: f64 = min_pair.1.inner();
-                        let arg_min = min_pair.0;
-                        y_cost_vectors[*ij_mapping_index][k.local_index] = min_val;
-                        mu.insert(*state, arg_min.to_string());
+
+                        y_cost_vectors[*ij_mapping_index][k.local_index] = minmax_val;
+                        mu.insert(*state, arg_minmax.to_string());
                     }
                     //println!("xbar:{:?}", x_cost_vectors[*ij_mapping_index]);
 
@@ -491,7 +470,7 @@ impl TeamMDP {
             r[task + self.num_agents] = y_task_cost_vector[task][init_team_index.team_index];
         }
 
-        println!("new r: {:?}", r);
+        //println!("new r: {:?}", r);
 
         Some((mu, r))
     }
@@ -541,7 +520,7 @@ impl TeamMDP {
         }
     }
 
-    pub fn multi_obj_sched_synth<'a>(&self, target: &Vec<f64>, eps: &f64, rewards: &Rewards, reg: &f64, team_index_mapping: &'a HashMap<(usize, usize), TeamStateIndexHelper>) -> Alg1Output<'a> {
+    pub fn multi_obj_sched_synth<'a>(&self, target: &Vec<f64>, eps: &f64, rewards: &Rewards, team_index_mapping: &'a HashMap<(usize, usize), TeamStateIndexHelper>) -> Alg1Output<'a> {
         let mut hullset: Vec<Vec<f64>> = Vec::new();
         let mut mu_vect: Vec<HashMap<&'a TeamState, String>> = Vec::new();
         let mut alg1_output: Alg1Output<'a> = Alg1Output{
@@ -554,7 +533,7 @@ impl TeamMDP {
 
         let mut extreme_points: Vec<Vec<f64>> = vec![vec![0.0; self.num_agents + self.num_tasks]; self.num_agents + self.num_tasks];
 
-        for k in 0..(self.num_agents + self.num_tasks) {
+        /*for k in 0..(self.num_agents + self.num_tasks) {
             if k < self.num_agents {
                 extreme_points[k][k] = 0.7;
                 for l in 0..k{
@@ -570,11 +549,13 @@ impl TeamMDP {
                     extreme_points[k][l] = 0.3 / self.num_agents as f64;
                 }
                 extreme_points[k][k] = 0.7;
-            }
+            }*/
 
+        for k in 0..(self.num_tasks + self.num_agents) {
+            extreme_points[k][k] = 1.0;
             let w_extr: &Vec<f64> = &extreme_points[k];
             println!("w: {:?}", w_extr);
-            let safe_ret = self.fair_min_exp_tot(&w_extr, &eps, &reg, &team_index_mapping);
+            let safe_ret = self.exp_tot_cost(&w_extr, &eps, &team_index_mapping, rewards);
             match safe_ret {
                 Some((mu_new, r)) => {
                     hullset.push(r);
@@ -597,51 +578,33 @@ impl TeamMDP {
             print!("]");
             println!();
         }
-        //return None;
-        let mut member_closure: bool = member_closure_set(&hullset, target, rewards);
         let dim = self.num_tasks + self.num_agents;
         let t_arr1 = arr1(target);
         let mut counter: u32 = 1;
-        while !member_closure {
-            let w_new = match lp5(&hullset, target, &dim) {
-                None => {println!("w -> infeasible, multi-obj satisfaction not possible"); return alg1_output}
-                Some(x) => x
-            };
-
+        let mut w_new = lp5(&hullset, target, &dim);
+        while w_new != None {
             println!("w' :{:?}", w_new);
-            let safe_ret = self.fair_min_exp_tot(&w_new, &eps, &reg, &team_index_mapping);
+            let safe_ret = self.exp_tot_cost(&w_new.as_ref().unwrap(), &eps, &team_index_mapping, rewards);
             match safe_ret {
                 Some((mu_new, r)) => {
                     println!("new r: {:?}", r);
-                    let weight_arr1 = arr1(&w_new);
+                    let weight_arr1 = arr1(&w_new.as_ref().unwrap());
                     let r_arr1 = arr1(&r);
                     let wr_dot = weight_arr1.dot(&r_arr1);
                     let wt_dot = weight_arr1.dot(&t_arr1);
-
                     println!("<w,r>: {}, <w,t>: {}", wr_dot, wt_dot);
-
-                    if wr_dot > wt_dot {
+                    if wr_dot < wt_dot {
                         println!("Multi-objective satisfaction not possible");
                         return alg1_output;
                     }
                     hullset.push(r);
                     mu_vect.push(mu_new);
-                    if member_closure_set(&hullset, target, rewards) {
-                        println!("member set found");
-                        //println!("r: {:?}", hullset.last().unwrap());
-                        member_closure = true
-                    }
                 },
                 None => panic!("No value was returned from the maximisation")
             }
-            if counter >= 20 {
-                return alg1_output;
-            }
-            counter += 1;
-
-
+            w_new = lp5(&hullset, target, &dim);
         }
-
+        println!("Constructing witness");
         let v = witness(&hullset, &target, &dim, &self.num_agents);
         println!("v: {:?}", v);
         alg1_output.v = v;

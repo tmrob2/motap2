@@ -196,15 +196,15 @@ impl DFAProductMDP {
         let mut state_modifications: HashSet<DFAModelCheckingPair> = HashSet::new();
         let mut label_modifications: HashSet<DFAProductLabellingPair> = HashSet::new();
         for state in self.states.iter().
-            filter(|x| dfa.dead.iter().all(|y| *y != x.q)) {
+            filter(|x| dfa.acc.iter().all(|y| *y != x.q)) {
             for transition in self.transitions.iter_mut().
                 filter(|x| x.sq == *state &&
                     x.sq_prime.iter().
-                        any(|xx| dfa.dead.iter().
+                        any(|xx| dfa.acc.iter().
                             any(|yy| *yy == xx.state.q))) {
                 //println!("observed transitions for state: {:?}", transition);
                 for sq_prime in transition.sq_prime.iter_mut().
-                    filter(|x| dfa.dead.iter().any(|y| *y == x.state.q)){
+                    filter(|x| dfa.acc.iter().any(|y| *y == x.state.q)){
                     if transition_modifications.iter().all(|x| x.sq != DFAModelCheckingPair {
                         s: 999,
                         q: sq_prime.state.q

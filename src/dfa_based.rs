@@ -11,8 +11,11 @@ use regex::Regex;
 
 use model_checking::mdp::*;
 use model_checking::dfa::*;
-use crate::model_checking::product_dfa::{ProductDFA, ProductDFAProductMDP, StatePair};
-use crate::model_checking::team_mdp::{LocalProductInput, DFAProductTeamMDP, ProductDFATeamState};
+use model_checking::product_dfa_product_mdp::*;
+use model_checking::product_dfa::*;
+use std::collections::hash_map::RandomState;
+use model_checking::gurobi_lp::witness;
+use crate::model_checking::team_mdp::*;
 
 fn main() {
     let matches = clap_app!(motap =>
@@ -80,7 +83,6 @@ fn main() {
             )
             (@arg RUN: -r --run "run task allocation and planning in a team MDP")
             (@arg EPS: --eps [EPSILON] default_value("0.005"))
-            (@arg REG: --reg [REGULARISATION] default_value("0.1") "A regulation term which helps to share resources among agents")
             (@arg STAT: -s [STATISTICS] default_value("0") "Statistics of the model")
             (@arg TERM: --term [TERMINATE] default_value("10000") "Termination value of value iteration")
             (@arg TEAM_TYPE: --team [TEAM_TYPE] default_value("0") "The type of team MDP to be created, \
@@ -212,13 +214,6 @@ fn main() {
         (_,_) => 0.0
     };
 
-    let regularisation: f64 = match matches.subcommand() {
-        ("motap", Some(f)) => {
-            f.value_of("REG").unwrap().parse().unwrap()
-        },
-        (_,_) => 0.0
-    };
-
     let team_type: u8 = match matches.subcommand() {
         ("motap", Some(f)) => {
             f.value_of("TEAM_TYPE").unwrap().parse().unwrap()
@@ -268,69 +263,125 @@ fn main() {
             target_parse = z.target;
         }
     }
+
     if test {
-        let mut product_dfa: ProductDFA = ProductDFA::default();
+
+
+    }
+
+    if team_type == 1 {
+        let mut product_dfa: ProductDFA = ProductDFA::default(); // Product DFA has a lifetime of a and lives for the entirety of Team
         product_dfa.sigma = dfa_parse[0].1.sigma.to_vec();
+        let mut transitions: Vec<ProductDFATransition> = Vec::new();
         for (j, task) in dfa_parse.iter() {
+            println!("Constructing automata: {}", j);
+            println!("Constructing states:");
+            let state_start = Instant::now();
+            let new_states = ProductDFA::create_states(&task, &mut product_dfa.states);
+            let duration = state_start.elapsed();
+            println!("{:?}", duration);
             product_dfa.initial.push(task.initial);
-            product_dfa.create_states(task);
-            product_dfa.create_transitions(task);
+            println!("Constructing Transitions");
+            let trans_start = Instant::now();
+            let new_transition: Vec<ProductDFATransition> = product_dfa.create_transitions(&task, &transitions[..], &new_states);
+            let duration = trans_start.elapsed();
+            println!("{:?}", duration);
+            product_dfa.states = new_states;
+            transitions = new_transition;
         }
+        product_dfa.delta = transitions;
+
         if graph_type == 1 {
             let g = product_dfa.create_automaton_graph();
             let dot = format!("{}", Dot::new(&g));
             let mut file = File::create("diagnostics/product_dfa_automaton.dot").unwrap();
             file.write_all(&dot.as_bytes());
         }
-        let mut dfa_prod_team_input: Vec<LocalProductInput> = vec![LocalProductInput::default(); mdp_parse.len()];
-        for (i, mdp) in mdp_parse.iter() {
-            let mut product_dfa_product_mdp: &mut ProductDFAProductMDP = &mut dfa_prod_team_input[*i].local_product;
-            product_dfa_product_mdp.set_initial(&mdp.initial, &product_dfa.initial);
-            product_dfa_product_mdp.create_states(&mdp, &product_dfa);
-            product_dfa_product_mdp.create_transitions(&mdp, &product_dfa, &dfa_parse.len(), &dfa_parse);
-            let mut g = product_dfa_product_mdp.graph_product_dfa_product_mdp();
-            let mut reachable = product_dfa_product_mdp.reachable_from_initial(&g);
-            product_dfa_product_mdp.prune_states(&reachable);
-            product_dfa_product_mdp.create_final_labelling(&dfa_parse);
-            /*for l in product_dfa_product_mdp.labelling.iter() {
-                println!("s: {:?}, agent:{}, l: {:?}", l.s, i, l.w);
+        let mut team_inputs: Vec<TeamInputs> = vec![TeamInputs{ states: vec![], initial: StatePair { s: 0, q: vec![] }, transitions: vec![], labelling: vec![], agent: 0 }; mdp_parse.len()];
+        for i in 0..mdp_parse.len() {
+            println!("Constructing {}", i);
+            let states = model_checking::product_dfa_product_mdp::create_states(&mdp_parse[i].1, &product_dfa);
+            let (transitions, labels) = model_checking::product_dfa_product_mdp::create_transitions(&states[..], &mdp_parse[i].1, &product_dfa, &dfa_parse, &verbose);
+            let initial = StatePair{ s: mdp_parse[i].1.initial, q: product_dfa.initial.to_vec()};
+            let reachable_states =
+                model_checking::product_dfa_product_mdp::reachable_from_initial(&states[..], &transitions[..], &initial);
+            let transitions = model_checking::product_dfa_product_mdp::prune_transitions(&reachable_states[..], &transitions[..]);
+            let (mod_trans_incompl_cand, mod_trans_compl_cand) = model_checking::product_dfa_product_mdp::identify_mod_transitions(&transitions[..], &labels[..]);
+            let (mod_trans_incompl,rm_transitions_incompl, mod_states_incompl, mod_labels_incompl) =
+                model_checking::product_dfa_product_mdp::modify_incomplete_tasks(&mod_trans_incompl_cand[..], &dfa_parse[..], &labels[..]);
+            let (mod_trans_compl,rm_transitions_compl, mod_states_compl, mod_labels_compl) =
+                model_checking::product_dfa_product_mdp::modify_complete_tasks(&mod_trans_compl_cand[..], &dfa_parse[..], &labels[..]);
+            let reachable_states = model_checking::product_dfa_product_mdp::append_states(&reachable_states[..], &mod_states_incompl[..]);
+            let reachable_states = model_checking::product_dfa_product_mdp::append_states(&reachable_states[..], &mod_states_compl);
+            let transitions = model_checking::product_dfa_product_mdp::remove_transitions(&transitions[..], &rm_transitions_incompl[..]);
+            let transitions = model_checking::product_dfa_product_mdp::remove_transitions(&transitions[..], &rm_transitions_compl[..]);
+            let transitions = model_checking::product_dfa_product_mdp::append_transitions(&transitions[..], &mod_trans_incompl[..]);
+            let transitions = model_checking::product_dfa_product_mdp::append_transitions(&transitions[..], &mod_trans_compl[..]);
+            let labels = model_checking::product_dfa_product_mdp::append_labels(&labels[..], &mod_labels_incompl[..]);
+            let labels = model_checking::product_dfa_product_mdp::append_labels(&labels, &mod_labels_compl[..]);
+            team_inputs[i].states = reachable_states;
+            team_inputs[i].initial = initial;
+            team_inputs[i].transitions = transitions;
+            team_inputs[i].labelling = labels;
+            team_inputs[i].agent = i;
+            /*for l in team_inputs[i].labelling.iter() {
+                println!("s: {},{:?},{}, l:{:?}", l.s.s, l.s.q, i, l.w);
             }*/
-            //
-            if graph_type == 2 {
-                ProductDFAProductMDP::prune_graph(&mut g, &reachable);
+            if graph_type == 3 {
+                let g = model_checking::product_dfa_product_mdp::create_graph(&team_inputs[i].states[..], &team_inputs[i].transitions[..]);
                 let dot = format!("{}", Dot::new(&g));
-                let mut file = File::create(format!("diagnostics/product_dfa_product_mdp{}.dot",i)).unwrap();
+                let mut file = File::create(format!("diagnostics/local_product_{}.dot", i)).unwrap();
                 file.write_all(&dot.as_bytes());
             }
-            dfa_prod_team_input[*i].agent = *i;
         }
-        let mut dfa_prod_team_mdp: DFAProductTeamMDP = DFAProductTeamMDP::default();
-        dfa_prod_team_mdp.initial = ProductDFATeamState {
-            s: dfa_prod_team_input[0].local_product.initial.s,
-            q: dfa_prod_team_input[0].local_product.initial.q.to_vec(),
-            agent: 0
-        };
+        let team_initial_default: StatePair = StatePair{ s: 0, q: vec![] };
+        let mut dfa_prod_team_mdp: DFAProductTeamMDP = DFAProductTeamMDP::default(&team_initial_default);
         dfa_prod_team_mdp.num_agents = mdp_parse.len();
         dfa_prod_team_mdp.num_tasks = dfa_parse.len();
-        dfa_prod_team_mdp.create_states(&dfa_prod_team_input);
-        dfa_prod_team_mdp.create_transitions(&dfa_prod_team_input);
-        if graph_type == 3 {
+        let (team_states, team_initial_state) = model_checking::team_mdp::create_states(&team_inputs[..]);
+        dfa_prod_team_mdp.states = team_states;
+        dfa_prod_team_mdp.initial = team_initial_state;
+        let team_transitions = model_checking::team_mdp::create_transitions(&dfa_prod_team_mdp.states[..], &team_inputs[..], &Rewards::NEGATIVE, dfa_prod_team_mdp.num_tasks, dfa_prod_team_mdp.num_agents);
+        dfa_prod_team_mdp.transitions = team_transitions;
+        /*
+        for s in dfa_prod_team_mdp.states.iter() {
+            println!("s:{},{:?},{}", s.s, s.q, s.agent);
+        }
+        for t in dfa_prod_team_mdp.transitions.iter().filter(|x| *x.from.s >= 999) {
+            println!("state: {},{:?},{}, rewards: {:?}", t.from.s, t.from.q, t.from.agent, t.reward);
+        }*/
+        if graph_type == 4 {
             let g = dfa_prod_team_mdp.generate_team_graph();
             let dot = format!("{}", Dot::new(&g));
             let mut file = File::create("diagnostics/product_dfa_product_team_mdp.dot").unwrap();
             file.write_all(&dot.as_bytes());
         }
-        let w = vec![0.2,0.2,0.2,0.2,0.2];
+        //let w = vec![0.25, 0.25, 0.25, 0.25];
         let team_index_mappings = dfa_prod_team_mdp.team_ij_index_mapping();
-        /*for transition in dfa_prod_team_mdp.transitions.iter() {
-            if transition.a == "tau" {
-                println!("s: ({},{:?},{}) -> s': {:?}, reward: {:?}",
-                         transition.from.s, transition.from.q, transition.from.agent,
-                         transition.to,
-                         transition.reward);
-            }
-        }*/
-        dfa_prod_team_mdp.min_tot_exp_tot(&w[..], &epsilon, &team_index_mappings);
+        if stats {
+            dfa_prod_team_mdp.statistics();
+        }
+        if run {
+            /*let safe_ret = dfa_prod_team_mdp.exp_tot_cost(&w[..], &epsilon, &team_index_mappings, &Rewards::NEGATIVE);
+            match safe_ret {
+                None => {}
+                Some((mu, r)) => {
+                    /*for (s,a) in mu.iter() {
+                        println!("s: {:?}, a:{}", s, a);
+                    }*/
+                    println!("r: {:?}", r);
+                    let team_initial = &dfa_prod_team_mdp.initial;
+                    let ordered_mu = model_checking::team_mdp::dfs_sched_debugger(&mu, &dfa_prod_team_mdp.states[..], &dfa_prod_team_mdp.transitions[..], team_initial);
+                    for (s,a) in ordered_mu.iter() {
+                        println!("s: ({},{:?},{}), a: {}", s.s, s.q, s.agent, a);
+                    }
+                }
+            }*/
+            let start = Instant::now();
+            let output = dfa_prod_team_mdp.multi_obj_sched_synth(&target_parse, &epsilon,  &team_index_mappings, &Rewards::NEGATIVE);
+            let duration = start.elapsed();
+            println!("Model checking time: {:?}", duration);
+        }
         return;
     }
     println!("target: {:?}", target_parse);
@@ -384,6 +435,7 @@ fn main() {
             team_counter += 1;
         }
     }
+
     let mut team_mdp = TeamMDP::default();
     team_mdp.num_agents = num_agents;
     team_mdp.num_tasks = num_tasks;
@@ -393,13 +445,17 @@ fn main() {
             println!("team state: ({},{},{},{})", state.state.s, state.state.q, state.agent, state.task);
         }
     }
-    team_mdp.create_transitions_and_labelling(&team_input, &Rewards::POSITIVE);
+    team_mdp.create_transitions_and_labelling(&team_input, &Rewards::NEGATIVE);
     team_mdp.assign_task_rewards();
     team_mdp.modify_final_rewards(&team_input);
     if verbose == 2 {
         for transition in team_mdp.transitions.iter() {
             println!("state: ({},{},{},{}) -> {:?}", transition.from.state.s, transition.from.state.q,
-            transition.from.agent, transition.from.task, transition.to);
+                transition.from.agent, transition.from.task,
+            transition.reward);
+        }
+        for l in team_mdp.labelling.iter() {
+            println!("s: ({},{},{},{}), l: {:?}", l.state.state.s, l.state.state.q, l.state.agent, l.state.task, l.label)
         }
     }
     if graph_type > 0 {
@@ -417,19 +473,14 @@ fn main() {
     }
 
     if run {
-        //let w = vec![0.25, 0.25, 0.25, 0.25];
+        let rewards: Rewards = Rewards::NEGATIVE;
         let team_index_mappings = team_mdp.team_ij_index_mapping();
-        /*for s in team_mdp.task_alloc_states.iter() {
-            println!("s: ({},{},{},{})", s.state.state.s, s.state.state.q, s.state.agent, s.state.task);
-        }
-
-        return;*/
+        /**/
 
         let start = Instant::now();
-        let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon, &Rewards::POSITIVE, &regularisation, &team_index_mappings);
+        let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon, &rewards, &team_index_mappings);
         let duration = start.elapsed();
         println!("Model checking time: {:?}", duration);
-
         /*
         match output {
             Some(x) => {

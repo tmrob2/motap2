@@ -5,3 +5,4 @@ pub mod helper_methods;
 pub mod mdp;
 pub mod gurobi_lp;
 pub mod product_dfa;
+pub mod product_dfa_product_mdp;

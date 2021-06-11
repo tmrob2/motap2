@@ -22,15 +22,6 @@ pub fn absolute_diff_vect(a: &Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
     c
 }
 
-pub fn parse_int(s: &str) -> std::result::Result<u32, ParseIntError> {
-    s.parse::<u32>()
-}
-
-pub fn parse_str_vect(s: &str) -> serde_json::Result<Vec<u32>> {
-    let u: Vec<u32> = serde_json::from_str(s)?;
-    Ok(u)
-}
-
 pub fn read_mdp_json<'a, P: AsRef<Path>>(path:P) -> std::result::Result<Vec<MDP>, Box<dyn Error>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);

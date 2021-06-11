@@ -1,0 +1,51 @@
+[{
+  "states": [0,1],
+  "initial": 0,
+  "transitions": [
+    {
+      "s": 0,
+      "a": "a",
+      "s_prime": [{"s": 1,"p": 1.0}],
+      "rewards": 5.0
+    }, {
+      "s": 0,
+      "a": "b",
+      "s_prime": [{"s": 0,"p": 1.0}],
+      "rewards": 1.0
+    },{
+      "s": 1,
+      "a": "a",
+      "s_prime": [{"s": 0,"p": 1.0}],
+      "rewards": 0.0
+    }
+  ],
+  "labelling": [
+    {"s": 0, "w": "a"},
+    {"s": 1, "w": "b"}
+  ]
+},{
+  "states": [0,1],
+  "initial": 0,
+  "transitions": [
+    {
+      "s": 0,
+      "a": "a",
+      "s_prime": [{"s": 1,"p": 1.0}],
+      "rewards": 5.0
+    }, {
+      "s": 0,
+      "a": "b",
+      "s_prime": [{"s": 0,"p": 1.0}],
+      "rewards": 1.0
+    },{
+      "s": 1,
+      "a": "a",
+      "s_prime": [{"s": 0,"p": 1.0}],
+      "rewards": 0.0
+    }
+  ],
+  "labelling": [
+    {"s": 0, "w": "a"},
+    {"s": 1, "w": "b"}
+  ]
+}]
