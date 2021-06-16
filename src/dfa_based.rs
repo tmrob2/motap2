@@ -488,7 +488,7 @@ fn main() {
                     None => {println!("witness vector not found, graph merging aborted");}
                     Some(v) => {
                         println!("v: {:?}", v);
-                        let graph = team_mdp.dfs_merging(&x.mu, &v);
+                        let graph = TeamMDP::dfs_merging(&team_mdp.initial, &output.mu, &output.v, &team_mdp.transitions[..]);
                         let dot = format!("{}", Dot::new(&graph));
                         let mut file = File::create("merged_sched.dot").unwrap();
                         file.write_all(&dot.as_bytes());

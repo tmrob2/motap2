@@ -11,6 +11,7 @@ use helper_methods::*;
 use dfa::*;
 use mdp::*;
 use gurobi_lp::*;
+use std::collections::hash_map::RandomState;
 
 pub struct TeamMDP {
     pub initial: TeamState,
@@ -291,11 +292,6 @@ impl TeamMDP {
         mapping
     }
 
-    /// Fair scheduler value iteration
-    /// ``` team_index``` is an index mapping of the filtered state spaces of a team MDP for a given
-    /// (task, agent) ordered pair. The hashmap key is the ordered pair, and the value is a
-    /// ```TeamStateIndexHelper``` or a struct containing a vector of tuples containing the state space
-    /// and the enumerated filtered index of the state.
     pub fn exp_tot_cost<'a>(&self, w: &[f64], eps: &f64, team_index: &'a HashMap<(usize, usize), TeamStateIndexHelper>, rewards: &Rewards) -> Option<(HashMap<&'a TeamState, String>, Vec<f64>)> {
         let mut mu: HashMap<&'a TeamState, String> = HashMap::new();
         let mut r: Vec<f64> = vec![0.0; w.len()];
@@ -613,18 +609,33 @@ impl TeamMDP {
         alg1_output
     }
 
-    pub fn dfs_merging(&self, sched: &Vec<Vec<Mu>>, v: &Vec<f64>) -> Graph<String, String> {
+    pub fn dfs_merging<'a>(initial: &'a TeamState, sched: &Vec<HashMap<&'a TeamState, String>>,
+                           v: &'a Vec<f64>, transitions: &'a [TeamTransition], hashmap_states: Option<&'a HashMap<u32, MDPLongState<'a>>>) -> Graph<String, String> {
         let mut graph: Graph<String, String> = Graph::new();
         let mut s = Vec::new();
         let c0: Vec<u32> = (1..(v.len() as u32)).collect();
-        s.push((&self.initial, c0));
+        s.push((initial, c0));
         while !s.is_empty() {
             let (s_val, c_val) = s.pop().unwrap();
-            let vertex = format!(
-                "(({},{},{},{}),({:?})",
-                s_val.state.s, s_val.state.q, s_val.agent, s_val.task,
-                c_val
-            );
+            let vertex = match hashmap_states {
+                None => {
+                    format!("(({},{},{},{}),({:?})",
+                            s_val.state.s, s_val.state.q, s_val.agent, s_val.task,
+                            c_val)
+                }
+                Some(x) => {
+                    if s_val.state.s == 999 {
+                        format!("(({},{},{},{}),({:?})",
+                                s_val.state.s, s_val.state.q, s_val.agent, s_val.task,
+                                c_val)
+                    } else {
+                        let mdp_coord = x.get(&s_val.state.s).unwrap();
+                        format!("((({},{}),{},{},{}),({:?})",
+                                mdp_coord.g.0, mdp_coord.g.1, s_val.state.q, s_val.agent, s_val.task,
+                                c_val)
+                    }
+                }
+            };
             let from_node_index;
             match graph.node_indices().find(|x| graph[*x] == vertex) {
                 None => {
@@ -639,19 +650,14 @@ impl TeamMDP {
                 }
             }
 
-            for transition in self.transitions.iter().
+            for transition in transitions.iter().
                 filter(|x| x.from == *s_val) {
                 let mut c_prime: Vec<u32> = Vec::new();
                 for (j, mu) in sched.iter().enumerate().
-                    filter(|(j,x)| c_val.iter().any(|y| *y == *j as u32) ) {
-                    let mu_s = mu.iter().find(|x| x.team_state == *s_val).unwrap();
-                    match &mu_s.action {
-                        None => { panic!("action not found in state: ({},{},{},{})", s_val.state.s, s_val.state.q, s_val.agent, s_val.task)}
-                        Some(x) => {
-                            if transition.a == *x {
-                                c_prime.push(j as u32);
-                            }
-                        }
+                    filter(|(j,_x)| c_val.iter().any(|y| *y == *j as u32) ) {
+                    let mu_s = mu.get(s_val).unwrap();
+                    if transition.a == *mu_s {
+                        c_prime.push(j as u32);
                     }
                 }
                 if !c_prime.is_empty() {
@@ -666,11 +672,32 @@ impl TeamMDP {
                         let v_sum: f64 = v_vect.iter().sum();
                         //println!("v_vect: {:?}, v_prime: {}", v_vect, v_sum);
                         let p = v_prime_sum / v_sum;
-                        let to_vertex = format!(
-                            "(({},{},{},{}),({:?})",
-                            sprime.state.state.s, sprime.state.state.q, sprime.state.agent, sprime.state.task,
-                            c_prime
-                        );
+                        let to_vertex = match hashmap_states {
+                            None => {
+                                format!(
+                                    "(({},{},{},{}),({:?})",
+                                    sprime.state.state.s, sprime.state.state.q, sprime.state.agent, sprime.state.task,
+                                    c_prime
+                                )
+                            }
+                            Some(x) => {
+                                if sprime.state.state.s == 999 {
+                                    format!(
+                                        "(({},{},{},{}),({:?})",
+                                        sprime.state.state.s, sprime.state.state.q, sprime.state.agent, sprime.state.task,
+                                        c_prime
+                                    )
+                                } else {
+                                    let mdp_sprime = x.get(&sprime.state.state.s).unwrap();
+                                    format!(
+                                        "((({},{}),{},{},{}),({:?})",
+                                        mdp_sprime.g.0, mdp_sprime.g.1, sprime.state.state.q, sprime.state.agent, sprime.state.task,
+                                        c_prime
+                                    )
+                                }
+
+                            }
+                        };
                         let destination_node_index;
                         match graph.node_indices().find(|x| graph[*x] == to_vertex) {
                             None => {
@@ -688,9 +715,12 @@ impl TeamMDP {
                     }
                 }
             }
-
         }
         graph
+    }
+
+    pub fn statistics(&self) -> (usize,usize) {
+        (self.states.len(), self.transitions.len())
     }
 }
 
@@ -812,3 +842,4 @@ pub struct Alg1Output<'a> {
     pub mu: Vec<HashMap<&'a TeamState, String>>,
     pub hullset: Vec<Vec<f64>>
 }
+

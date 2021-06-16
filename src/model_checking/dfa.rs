@@ -276,6 +276,25 @@ impl DFAProductMDP {
     }
 }
 
+pub fn create_local_product<'a, 'b>(initial_state: &'b DFAModelCheckingPair, mdp: &'a MDP, dfa: &'a DFA) -> DFAProductMDP {
+    let mut local_product: DFAProductMDP = DFAProductMDP::default();
+    local_product.initial = *initial_state;
+    local_product.create_states(mdp, dfa);
+    local_product.create_transitions(mdp, dfa);
+    /*for t in local_product.transitions.iter() {
+        println!("t:{:?}", t);
+    }*/
+    let mut g = local_product.generate_graph();
+    let initially_reachable = local_product.reachable_from_initial(&g);
+    let (prune_states_indices, prune_states) : (Vec<usize>, Vec<DFAModelCheckingPair>) = local_product.prune_candidates(&initially_reachable);
+    local_product.prune_states_transitions(&prune_states_indices, &prune_states);
+    local_product.create_labelling(mdp);
+    local_product.modify_complete(dfa);
+    //println!("modifying agent: {} task: {}", i, j);
+    local_product.edit_labelling(dfa, mdp);
+    local_product
+}
+
 #[derive(Clone, Debug)]
 pub struct TeamInput {
     pub agent: usize,

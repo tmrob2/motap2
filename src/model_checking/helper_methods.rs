@@ -4,13 +4,13 @@ use std::path::Path;
 use std::error::Error;
 use std::fs::File;
 extern crate serde_json;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize, Serializer};
 use super::mdp;
 use super::dfa;
 
 use mdp::*;
 use dfa::*;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::iter::FromIterator;
 
 pub fn absolute_diff_vect(a: &Vec<f64>, b: &Vec<f64>) -> Vec<f64> {

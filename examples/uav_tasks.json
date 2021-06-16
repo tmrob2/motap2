@@ -1,0 +1,16 @@
+[{
+  "states": [0,1,2,3],
+  "initial": 0,
+  "sigma": ["", "start", "lead", "finish"],
+  "delta": [
+    {"q":  0, "w": ["!start"], "q_prime": 0},
+    {"q":  0, "w": ["start"], "q_prime": 1},
+    {"q":  1, "w": ["lead"], "q_prime": 1},
+    {"q":  1, "w": ["!lead"], "q_prime":  3},
+    {"q":  1, "w": ["finish"], "q_prime": 2},
+    {"q":  2, "w":  ["true"], "q_prime":  2},
+    {"q":  3, "w":  ["true"], "q_prime":  3}
+  ],
+  "acc": [2],
+  "dead": [3]
+}]

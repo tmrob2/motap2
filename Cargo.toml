@@ -35,6 +35,10 @@ path="src/lib.rs"
 name = "dfa"
 path = "src/dfa_based.rs"
 
+[[bin]]
+name = "uav"
+path = "src/uav.rs"
+
 [[bench]]
 name="benchmark"
 harness = false

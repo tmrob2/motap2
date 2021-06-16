@@ -501,7 +501,7 @@ pub fn remove_transitions<'a>(transitions: &'a [ProdMDPTransition], remove: &'a 
     new_transitions
 }
 
-pub fn append_states<'a>(states: &'a [StatePair], mod_states: &'a [StatePair]) -> Vec<StatePair> {
+pub fn append_states<'a>(states: &'a [StatePair], mod_states: &'a [StatePair]) -> Vec<StatePair>    {
     let mut new_states: Vec<StatePair> = vec![StatePair{ s: 0, q: vec![] }; states.len() + mod_states.len()];
     let mut count: usize = 0;
     for s in states.iter() {

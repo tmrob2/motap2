@@ -9,13 +9,13 @@ pub struct MDP {
     pub labelling: Vec<MDPLabellingPair>
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct MDPLabellingPair {
     pub s: u32,
     pub w: String
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Transition {
     pub s: u32,
     pub a: String,
@@ -23,8 +23,14 @@ pub struct Transition {
     pub rewards: f64
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct TransitionPair {
     pub s: u32,
     pub p: f64
+}
+
+#[derive(Debug, Hash, Eq, PartialEq)]
+pub struct MDPLongState<'a> {
+    pub m: &'a str,
+    pub g: (usize,usize)
 }
