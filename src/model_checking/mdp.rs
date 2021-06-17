@@ -12,7 +12,7 @@ pub struct MDP {
 #[derive(Debug, Deserialize, Clone)]
 pub struct MDPLabellingPair {
     pub s: u32,
-    pub w: String
+    pub w: Vec<String>
 }
 
 #[derive(Debug, Deserialize, Clone)]

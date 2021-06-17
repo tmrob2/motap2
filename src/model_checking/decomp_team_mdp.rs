@@ -155,7 +155,7 @@ impl TeamMDP {
                                 state: TeamState {
                                     state: DFAModelCheckingPair {
                                         s: team_input[first_agent_index].product.initial.s,
-                                        q: team_input[first_agent_index].product.initial.s
+                                        q: team_input[first_agent_index].product.initial.q
                                     },
                                     agent: 0,
                                     task: state.task + 1
@@ -299,7 +299,7 @@ impl TeamMDP {
         let ij_k_mapping = self.ij_mapping();
 
         let test_state = TeamState {
-            state: DFAModelCheckingPair { s: 0, q: 0 },
+            state: DFAModelCheckingPair { s: 0, q: 2 },
             agent: 0,
             task: 0
         };
@@ -321,6 +321,7 @@ impl TeamMDP {
 
         let mut x_task_cost_vector: Vec<Vec<f64>> = vec![vec![0.0; self.states.len()]; self.num_tasks];
         let mut y_task_cost_vector: Vec<Vec<f64>> = vec![vec![0.0; self.states.len()]; self.num_tasks];
+        let mut count = 0;
 
         for j in (0..self.num_tasks).rev() {
             for i in (0..self.num_agents).rev() {
@@ -358,6 +359,10 @@ impl TeamMDP {
                             let mut action_reward = scaled_weight_rewards + sum_vect_sum;
                             min_action_values.push((transition.a.to_string(), action_reward));
                         }
+                        /*if **state == test_state {
+                            println!("state:{:?}, min_action_values: {:?}", state, min_action_values);
+                        }*/
+
                         //min_action_values.sort_by(|(a1, a2), (b1, b2)| a1.partial_cmp(b1).unwrap());
                         let mut v: Vec<_> = min_action_values.iter().
                             map(|(z, x)| (z, NonNan::new(*x).unwrap())).collect();
@@ -370,25 +375,9 @@ impl TeamMDP {
                         let mut minmax_val: f64 = minmax_pair.1.inner();
                         let mut arg_minmax = minmax_pair.0;
 
-                        /*if self.task_alloc_states.iter().any(|x| x.state == **state) {
-                            let check_mult_argmin: Vec<_> = v.iter().
-                                filter(|(k,x)| x.inner() == v.last().unwrap().1.inner()).
-                                map(|(k, x)| (*k,*x)).collect();
-                            if check_mult_argmin.len() > 1 && check_mult_argmin.iter().any(|(a, x)| **a == "swi") {
-                                println!("min pair: {:?}, mult argmin: {:?}", minmax_pair, check_mult_argmin);
-                                let rand_min_pair: &(&String, NonNan) = check_mult_argmin.choose(& mut rand::thread_rng()).unwrap();
-                                //let rand_min_pair = check_mult_argmin.iter().find(|(a, x)| **a == "swi").unwrap();
-                                println!("state: ({},{},{},{}) -> a: {:?}", state.state.s, state.state.q, state.agent, state.task, check_mult_argmin);
-                                minmax_val = rand_min_pair.1.inner();
-                                arg_minmax = rand_min_pair.0;
-                            }
-                        }*/
-
                         y_cost_vectors[*ij_mapping_index][k.local_index] = minmax_val;
                         mu.insert(*state, arg_minmax.to_string());
                     }
-                    //println!("xbar:{:?}", x_cost_vectors[*ij_mapping_index]);
-
                     let y_bar_diff = absolute_diff_vect(&x_cost_vectors[*ij_mapping_index], &y_cost_vectors[*ij_mapping_index]);
                     let mut y_bar_diff_max_vect: Vec<NonNan> = y_bar_diff.iter().
                         map(|x| NonNan::new(*x).unwrap()).collect();

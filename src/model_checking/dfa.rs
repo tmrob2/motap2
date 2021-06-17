@@ -49,7 +49,7 @@ impl DFAProductMDP {
             for mdp_label in mdp.labelling.iter().filter(|x| x.s == state.s) {
                 self.labelling.push(DFAProductLabellingPair{
                     sq: DFAModelCheckingPair { s: state.s, q: state.q },
-                    w: vec![mdp_label.w.to_string()]
+                    w: mdp_label.w.to_vec()
                 });
             }
         }
@@ -69,17 +69,21 @@ impl DFAProductMDP {
                     reward: 0.0
                 };
                 t.reward = transition.rewards; // this is the reward inherited from the MDP
+                //println!("s:{:?}", state);
                 for sprime in transition.s_prime.iter() {
-                    for lab in mdp.labelling.iter()
-                        .filter(|l| l.s == sprime.s) {
-                        for q_prime in dfa.delta.iter()
-                            .filter(|q| q.q == state.q && q.w.iter().any(|xx| *xx == lab.w)) {
-                            t.sq_prime.push(DFATransitionPair {
-                                state: DFAModelCheckingPair {s: sprime.s, q: q_prime.q_prime},
-                                p: sprime.p
-                            })
-                        }
+                    let label = mdp.labelling.iter().find(|x| x.s == sprime.s).unwrap();
+                    //println!("s': {:?}, label: {:?}", sprime.s, label);
+                    for q_prime in dfa.delta.iter().
+                        filter(|x| x.q == state.q && x.w.iter().any(|y| label.w.iter().any(|z| z == y))) {
+                        //println!("q': {:?}", q_prime);
+                        t.sq_prime.push(DFATransitionPair {
+                            state: DFAModelCheckingPair {s: sprime.s, q: q_prime.q_prime},
+                            p: sprime.p
+                        });
                     }
+                }
+                if t.sq_prime.is_empty() {
+                    panic!("state: {:?}", state);
                 }
                 self.transitions.push(t);
             }

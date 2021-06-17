@@ -14,27 +14,31 @@ use itertools::Itertools;
 use std::collections::HashMap;
 
 fn main() {
-    let grid_dim: (usize, usize) = (30,5);
+    let grid_dim: (usize, usize) = (11, 11);
     let grid_state_space: HashMap<usize,(usize,usize)> = create_grid(grid_dim);
-    let c_loc: (usize,usize) = (0,2);
-    let c_loc2: (usize,usize) = (3,0);
+    let c_loc: (usize,usize) = (0,0);
+    let c_loc2: (usize,usize) = (1,0);
     let act1: Vec<&str> = vec!["x", "l", "r"];
     let act2: Vec<&str> = vec!["n", "s", "e", "w"];
     // Different agents may have different obstacles
-    let obstacles: [(usize, usize); 3] = [(1,1),(1,2),(1,3)];
+    let obstacles: [(usize, usize); 17] = [(2,2),(2,3),(2,4),(4,4),(5,4),(6,4),(7,2),
+        (8,2),(9,2),(9,3),(9,4),(9,5),(9,6),(9,7),(8,7),(7,7),(6,7)];
     // hazards
-    let hazards: [(usize, usize); 1] = [(1,0)];
+    let hazards: [(usize, usize); 10] = [(3,0),(4,0),(4,1),(4,2),(3,7),(2,8),(2,9),(4,8),(4,9),(4,10)];
     // Different agents may have different probabilities of moving in cardinal directions
-    let movement_p: f64 = 0.95;
+    let movement_p: f64 = 1.0;
     //
     let mut all_act: Vec<&str> = act1.to_vec();
     all_act.extend(act2.iter().copied());
-    let mut obj_points: HashMap<MDPLongState,&str> = HashMap::new();
-    obj_points.insert(MDPLongState{ m: "l", g: (0, 1) }, "start");
-    //obj_points.insert(MDPLongState{ m: "l", d: "d2", g: (0, 0) }, "start");
-    obj_points.insert(MDPLongState{ m: "l", g: (25, 3) }, "finish");
-    obj_points.insert(MDPLongState{ m: "r", g: (4, 3) }, "sensor");
-    obj_points.insert(MDPLongState{ m: "r", g: (25, 0)}, "download");
+    let mut obj_points: HashMap<MDPLongState,Vec<String>> = HashMap::new();
+    obj_points.insert(MDPLongState{ m: "l", g: (0, 2) }, vec![String::from("start1")]);
+    obj_points.insert(MDPLongState{ m: "l", g: (3, 9) }, vec![String::from("f1")]);
+    obj_points.insert(MDPLongState{ m: "l", g: (1, 0) }, vec![String::from("start2")]);
+    obj_points.insert(MDPLongState{ m: "l", g: (10, 9) }, vec![String::from("f2")]);
+    obj_points.insert(MDPLongState{ m: "r", g: (2, 0) }, vec![String::from("s1")]);
+    obj_points.insert(MDPLongState{ m: "r", g: (5, 0) }, vec![String::from("down")]);
+    //obj_points.insert(MDPLongState{ m: "r", g: (2, 1) }, "s");
+    //obj_points.insert(MDPLongState{ m: "r", g: (2, 2)}, "d");
     // --------------------------------------
     // Construct the Agent-Environment Model
     // --------------------------------------
@@ -71,8 +75,6 @@ fn main() {
         for (j, dfa) in dfas.iter() {
             let initial_state = DFAModelCheckingPair { s: mdp.initial, q: dfa.initial };
             let local_product = model_checking::dfa::create_local_product(&initial_state, mdp, dfa);
-            //println!("local product states: {:?}", local_product.states);
-            //println!("local product transitions: {:?}", local_product.transitions);
             team_input[team_counter] = TeamInput {
                 agent: i,
                 task: *j,
@@ -87,7 +89,7 @@ fn main() {
     // ----------------------------
     // Create Team Structure
     // ----------------------------
-    let target: Vec<f64> = vec![-120.0, -120.0, 800.0];
+    let target: Vec<f64> = vec![-80.0, -80.0, 800.0, 800.0, 800.0];
     let epsilon: f64 = 0.0001;
     let mut team_mdp = TeamMDP::default();
     team_mdp.num_agents = num_agents;
@@ -97,10 +99,12 @@ fn main() {
     team_mdp.assign_task_rewards();
     team_mdp.modify_final_rewards(&team_input);
 
+    /*
     let tg = team_mdp.generate_graph();
     let dot = format!("{}", Dot::new(&tg));
     let mut file = File::create("diagnostics/team_mdp.dot").unwrap();
     file.write_all(&dot.as_bytes());
+     */
 
     let rewards: Rewards = Rewards::NEGATIVE;
     let team_index_mappings = team_mdp.team_ij_index_mapping();
@@ -110,7 +114,8 @@ fn main() {
     println!("Model checking time: {:?}", duration);
     let (state_count, transition_count) = team_mdp.statistics();
     println!("Model Statistics: |S|: {}, |P|: {}", state_count, transition_count);
-    let graph = TeamMDP::dfs_merging(&team_mdp.initial, &output.mu, &output.v, &team_mdp.transitions[..], Some(&mdp_state_hashmap));
+    let graph = TeamMDP::dfs_merging(&team_mdp.initial, &output.mu, &output.v,
+                                     &team_mdp.transitions[..], Some(&mdp_state_hashmap));
     let dot = format!("{}", Dot::new(&graph));
     let mut file = File::create("diagnostics/merged_sched.dot").unwrap();
     file.write_all(&dot.as_bytes());
@@ -138,7 +143,7 @@ fn create_mdp_states<'a>(grid_states: &'a HashMap<usize,(usize,usize)>, internal
 fn create_mdp_transitions<'a>(states: &'a [u32], state_hash: &'a HashMap<u32, MDPLongState<'a>>,
                               state_coords: &'a HashMap<MDPLongState<'a>, u32>, grid_dim: &'a (usize,usize),
                               movement_p: &f64, obstacles: &'a [(usize,usize)], hazards: &'a [(usize, usize)],
-                              objectives: &'a HashMap<MDPLongState<'a>,&'a str>, all_actions: &'a [&'a str])
+                              objectives: &'a HashMap<MDPLongState<'a>, Vec<String>>, all_actions: &'a [&'a str])
                               -> (Vec<model_checking::mdp::Transition>, Vec<model_checking::mdp::MDPLabellingPair>){
     // An mdp transition looks like s, a, sprime: [], reward
     let mut transitions: Vec<model_checking::mdp::Transition> = Vec::new();
@@ -149,18 +154,31 @@ fn create_mdp_transitions<'a>(states: &'a [u32], state_hash: &'a HashMap<u32, MD
         // configuration of the agent
         match objectives.get(&long_state) {
             None => {
+                let mut word: Vec<String> = vec![];
+                /*if hazards.iter().any(|x| *x == long_state.g) {
+                    word.push(String::from("h"));
+                }*/
                 if long_state.m.contains("x") {
                     // default configuration states
-                    labels.push(model_checking::mdp::MDPLabellingPair{ s: *s, w: "".to_string()})
+                    word.push(String::from(""));
+                    labels.push(model_checking::mdp::MDPLabellingPair{ s: *s, w: word})
                 } else if long_state.m.contains("l") {
                     // leading configuration states
-                    labels.push(model_checking::mdp::MDPLabellingPair{ s: *s, w: "lead".to_string()})
+                    word.push(String::from("l"));
+                    labels.push(model_checking::mdp::MDPLabellingPair{ s: *s, w: word})
                 } else if long_state.m.contains("r") {
                     // leading configuration states
-                    labels.push(model_checking::mdp::MDPLabellingPair{ s: *s, w: "sensor".to_string()})
+                    word.push(String::from("r"));
+                    labels.push(model_checking::mdp::MDPLabellingPair{ s: *s, w: word})
                 }
             }
-            Some(x) => labels.push(model_checking::mdp::MDPLabellingPair{ s: *s, w: x.to_string() })
+            Some(x) => {
+                let mut word: Vec<String> = x.to_vec();
+                /*if hazards.iter().any(|x| *x == long_state.g) {
+                    word.push(String::from("h"));
+                }*/
+                labels.push(model_checking::mdp::MDPLabellingPair{ s: *s, w: word });
+            }
         };
         let movement = movement_coords(s, &state_hash, &grid_dim, obstacles);
         let hazard_state = hazards.iter().any(|x| *x == long_state.g);
@@ -207,12 +225,15 @@ fn create_mdp_transitions<'a>(states: &'a [u32], state_hash: &'a HashMap<u32, MD
             } else if *a == "x" {
                 let x_state = state_coords.get(&MDPLongState { m: "x", g: long_state.g }).unwrap();
                 transition.s_prime = vec![model_checking::mdp::TransitionPair { s: *x_state, p: 1.0 }];
+                transition.rewards = 1.0;
             } else if *a == "l" {
                 let x_state = state_coords.get( &MDPLongState { m: "l", g: long_state.g }).unwrap();
                 transition.s_prime = vec![model_checking::mdp::TransitionPair{ s: *x_state, p: 1.0 }];
+                transition.rewards = 1.0;
             } else if *a == "r" {
                 let x_state = state_coords.get( &MDPLongState { m: "r", g: long_state.g }).unwrap();
                 transition.s_prime = vec![model_checking::mdp::TransitionPair{ s: *x_state, p: 1.0 }];
+                transition.rewards = 1.0;
             }
             if !transition.s_prime.is_empty() {
                 transitions.push(transition);
@@ -234,16 +255,6 @@ fn read_dfas() -> Vec<(usize, DFA)> {
         None => {println!("There was an error reading the DFAs from examples/uav_tasks.json")}
         Some(x) => {
             for (i, mut aut) in x.into_iter().enumerate() {
-                for transition in aut.delta.iter_mut() {
-                    //println!("w: {:?}", transition.w);
-                    match parse_language(&aut.sigma, &transition.w) {
-                        None => {}
-                        Some(x) => {
-                            //println!("parsed words: {:?}", x);
-                            transition.w = x;
-                        }
-                    }
-                }
                 dfa_parse.push((i, aut));
             }
         }
@@ -321,7 +332,21 @@ fn move_east(x: &usize, y: &usize, grid_dim: &(usize,usize), obstacles: &[(usize
 fn s_prime_movement<'a, 'b>(state: &'a MDPLongState<'a>, movements: &'a Movement, p_dir: &'b f64,
                             direction: &'b MovementDirection, state_coords: &'a HashMap<MDPLongState<'a>, u32>)
     -> Vec<model_checking::mdp::TransitionPair> {
-    let mut sprime: Vec<model_checking::mdp::TransitionPair> = vec![
+    let mut sprime: Vec<model_checking::mdp::TransitionPair> = match direction {
+        MovementDirection::NORTH => {
+            vec![ TransitionPair{ s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.north }).unwrap(), p: 1.0 }]
+        }
+        MovementDirection::SOUTH => {
+            vec![ TransitionPair{ s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.south }).unwrap(), p: 1.0 }]
+        }
+        MovementDirection::EAST => {
+            vec![ TransitionPair{ s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.east }).unwrap(), p: 1.0 }]
+        }
+        MovementDirection::WEST => {
+            vec![ TransitionPair{ s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.west }).unwrap(), p: 1.0 }]
+        }
+    };
+    /*vec![
         TransitionPair{
             s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.north }).unwrap(),
             p: match direction {
@@ -351,9 +376,9 @@ fn s_prime_movement<'a, 'b>(state: &'a MDPLongState<'a>, movements: &'a Movement
                 _ => { (1f64 - *p_dir) / 2f64 }
             }}
     ];
+
+         */
     sprime
-
-
 }
 
 // ----------------------
