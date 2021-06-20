@@ -12,6 +12,7 @@ use mdp::*;
 use dfa::*;
 use std::collections::{HashSet, HashMap};
 use std::iter::FromIterator;
+use std::hash::Hash;
 
 pub fn absolute_diff_vect(a: &Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
     let a_b: Vec<_> = a.iter().zip(b.into_iter()).collect();
@@ -71,6 +72,13 @@ pub fn parse_language(sigma: &Vec<String>, w: &Vec<String>) -> Option<Vec<String
     valid_words
 }
 
+pub fn power_set<T: Clone + Eq + Hash>(a: &[T])-> Vec<HashSet<T>> {
+    a.iter().fold(vec![HashSet::new()], |mut p, x| {
+        let i = p.clone().into_iter()
+            .map(|mut s| {s.insert(x.clone()); s});
+        p.extend(i); p})
+}
+
 #[derive(PartialOrd, PartialEq, Debug, Clone, Copy)]
 pub struct NonNan(f64);
 
@@ -99,4 +107,18 @@ impl Ord for NonNan {
 #[derive(Debug, Deserialize)]
 pub struct Target {
     pub target: Vec<f64>
+}
+
+pub fn construct_labelling_vect<'a>(v: &'a[Vec<&'a str>]) -> Vec<HashSet<&'a str>> {
+    let mut v_new: Vec<_> = Vec::new();
+    for w in v.iter() {
+        let h = construct_hash_from_vect(&w[..]);
+        v_new.push(h)
+    }
+    v_new
+}
+
+pub fn construct_hash_from_vect<'a>(v: &[&'a str]) -> HashSet<&'a str> {
+    let h: HashSet<&'a str> = HashSet::from_iter(v.iter().cloned());
+    h
 }

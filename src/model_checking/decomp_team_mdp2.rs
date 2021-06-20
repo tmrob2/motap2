@@ -1,6 +1,6 @@
 use super::helper_methods;
-use super::dfa;
-use super::mdp;
+use super::dfa2;
+use super::mdp2;
 use super::gurobi_lp;
 use petgraph::{Graph, graph::NodeIndex};
 use std::collections::{HashSet, VecDeque, HashMap};
@@ -8,10 +8,11 @@ use ndarray::{arr1, NdIndex};
 use rand::seq::SliceRandom;
 
 use helper_methods::*;
-use dfa::*;
-use mdp::*;
+use dfa2::*;
+use mdp2::*;
 use gurobi_lp::*;
 use std::collections::hash_map::RandomState;
+use std::iter::FromIterator;
 
 pub struct TeamMDP {
     pub initial: TeamState,
@@ -24,19 +25,19 @@ pub struct TeamMDP {
 }
 
 impl TeamMDP {
-    pub fn create_states(&mut self, team_input: &Vec<dfa::TeamInput>) {
+    pub fn create_states(&mut self, team_input: &Vec<dfa2::TeamInput>) {
 
         for task_agent in team_input.iter() {
             for state in task_agent.product.states.iter() {
                 self.states.push(TeamState {
-                    state: DFAModelCheckingPair { s: state.s, q: state.q },
+                    state: DFA2ModelCheckingPair { s: state.s, q: state.q },
                     agent: task_agent.agent,
                     task: task_agent.task
                 });
             }
             if task_agent.agent < self.num_agents - 1 {
                 let alloc_state = TeamState{
-                    state: DFAModelCheckingPair { s: task_agent.product.initial.s, q: task_agent.product.initial.q },
+                    state: DFA2ModelCheckingPair { s: task_agent.product.initial.s, q: task_agent.product.initial.q },
                     agent: task_agent.agent,
                     task: task_agent.task
                 };
@@ -53,17 +54,20 @@ impl TeamMDP {
 
         let dfa_init = team_input[0].product.initial;
         self.initial = TeamState {
-            state: DFAModelCheckingPair { s: dfa_init.s, q: dfa_init.q },
+            state: DFA2ModelCheckingPair { s: dfa_init.s, q: dfa_init.q },
             agent: 0,
             task: 0
         };
     }
 
-    pub fn create_transitions_and_labelling(&mut self, team_input: &Vec<dfa::TeamInput>, rewards_type: &Rewards) {
+    pub fn create_transitions_and_labelling(&mut self, team_input: &Vec<dfa2::TeamInput>, rewards_type: &Rewards) {
         let rewards_coeff: f64 = match rewards_type {
             Rewards::POSITIVE => 1.0,
             Rewards::NEGATIVE => -1.0
         };
+        let h_all: HashSet<&str> = HashSet::from_iter(vec!["ini","suc","fai"].iter().cloned());
+        let h_end: HashSet<&str> = HashSet::from_iter(vec!["suc", "fai"].iter().cloned());
+        let h_com: HashSet<&str> = HashSet::from_iter(vec!["com"].iter().cloned());
         for state in self.states.iter() {
             for input in team_input.iter().
                 filter(|x| x.task == state.task && x.agent == state.agent) {
@@ -74,7 +78,7 @@ impl TeamMDP {
                     for s_prime in transition.sq_prime.iter() {
                         state_prime.push(TeamTransitionPair {
                             state: TeamState {
-                                state: DFAModelCheckingPair { s: s_prime.state.s, q: s_prime.state.q },
+                                state: DFA2ModelCheckingPair { s: s_prime.state.s, q: s_prime.state.q },
                                 agent: state.agent,
                                 task: state.task
                             },
@@ -85,9 +89,9 @@ impl TeamMDP {
                     // everywhere else
                     let mut rewards: Vec<f64> = vec![0.0; self.num_tasks + self.num_agents];
                     let state_label = input.product.labelling.iter().
-                        find(|x| x.sq == state.state).unwrap().w.to_vec();
+                        find(|x| *x.sq == state.state).unwrap().w.to_vec();
                     //println!("state label: {:?}", state_label);
-                    if state_label.iter().all(|x| *x != "suc" && *x != "fai") {
+                    if state_label.iter().all(|x| x.intersection(&h_end).count() == 0) {
                         //println!("state: {:?}, agent: {}, task: {} contains no completion labels", state.state, state.agent, state.task);
                         if transition.reward != 0f64 && transition.a != "tau" {
                             rewards[input.agent] = rewards_coeff * transition.reward;
@@ -96,7 +100,7 @@ impl TeamMDP {
                     //println!("debug rewards: {:?}", rewards);
                     self.transitions.push(TeamTransition {
                         from: TeamState {
-                            state: DFAModelCheckingPair { s: state.state.s, q: state.state.q },
+                            state: DFA2ModelCheckingPair { s: state.state.s, q: state.state.q },
                             agent: state.agent,
                             task: state.task
                         },
@@ -108,23 +112,24 @@ impl TeamMDP {
                 }
                 // Labelling
                 for label_pair in input.product.labelling.iter().
-                    filter(|x| x.sq == state.state) {
+                    filter(|x| *x.sq == state.state) {
                     //println!("working on agent: {0} of {2}; task: {1} of {3}", state.agent, state.task, self.num_agents - 1, self.num_tasks - 1);
                     // switching across agents, same task
-                    if label_pair.w.iter().any(|x| *x == "ini" || *x == "suc" || *x == "fai") &&
+                    //println!("label: {:?}", label_pair.w);
+                    if label_pair.w.iter().any(|x| x.intersection(&h_all).count() > 0 ) &&
                         state.agent < self.num_agents - 1 {
                         let next_agent_index = team_input.iter().
                             position(|x| x.agent == state.agent + 1).unwrap();
                         let new_switch_transition = TeamTransition {
                             from: TeamState {
-                                state: DFAModelCheckingPair { s: state.state.s, q: state.state.q },
+                                state: DFA2ModelCheckingPair { s: state.state.s, q: state.state.q },
                                 agent: state.agent,
                                 task: state.task
                             },
                             a: "swi".to_string(),
                             to: vec![TeamTransitionPair{
                                 state: TeamState {
-                                    state: DFAModelCheckingPair {
+                                    state: DFA2ModelCheckingPair {
                                         s: team_input[next_agent_index].product.initial.s,
                                         q: state.state.q
                                     },
@@ -138,7 +143,7 @@ impl TeamMDP {
                         //println!("creating switch transition for agent: {}, task: {}, of: {:?}", state.agent, state.task, new_switch_transition);
                         self.transitions.push(new_switch_transition);
 
-                    } else if label_pair.w.iter().any(|x| *x == "suc" || *x == "fai") &&
+                    } else if label_pair.w.iter().any(|x| x.intersection(&h_end).count() > 0) &&
                         state.agent == self.num_agents - 1 && state.task < self.num_tasks - 1 {
                         // the switch transition increases the number of tasks and passes it to the
                         // first agent
@@ -146,14 +151,14 @@ impl TeamMDP {
                             position(|x| x.agent == 0 && x.task == state.task + 1).unwrap();
                         self.transitions.push(TeamTransition {
                             from: TeamState {
-                                state: DFAModelCheckingPair { s: state.state.s, q: state.state.q },
+                                state: DFA2ModelCheckingPair { s: state.state.s, q: state.state.q },
                                 agent: state.agent,
                                 task: state.task
                             },
                             a: "swi".to_string(),
                             to: vec![TeamTransitionPair {
                                 state: TeamState {
-                                    state: DFAModelCheckingPair {
+                                    state: DFA2ModelCheckingPair {
                                         s: team_input[first_agent_index].product.initial.s,
                                         q: team_input[first_agent_index].product.initial.q
                                     },
@@ -164,20 +169,20 @@ impl TeamMDP {
                             }],
                             reward: vec![0.0; self.num_agents + self.num_tasks]
                         });
-                    } else if label_pair.w.iter().any(|x| *x == "suc" || *x == "fai") &&
+                    } else if label_pair.w.iter().any(|x| x.intersection(&h_end).count() > 0) &&
                         state.agent == self.num_agents - 1 && state.task == self.num_tasks - 1 {
                         self.labelling.push(TeamLabelling {
                             state: TeamState {
-                                state: DFAModelCheckingPair { s: state.state.s, q: state.state.q },
+                                state: DFA2ModelCheckingPair { s: state.state.s, q: state.state.q },
                                 agent: state.agent,
                                 task: state.task
                             },
                             label: vec!["done".to_string()]
                         });
-                    } else if label_pair.w.iter().any(|x| *x == "com") {
+                    } else if label_pair.w.iter().any(|x| x.intersection(&h_com).count() > 0 ){
                         self.labelling.push(TeamLabelling {
                             state: TeamState {
-                                state: DFAModelCheckingPair { s: state.state.s, q: state.state.q },
+                                state: DFA2ModelCheckingPair { s: state.state.s, q: state.state.q },
                                 agent: state.agent,
                                 task: state.task
                             },
@@ -196,7 +201,7 @@ impl TeamMDP {
             //println!("task index: {}", task_index);
             let transition_copy: TeamTransition = TeamTransition {
                 from: TeamState {
-                    state: DFAModelCheckingPair { s: transition.from.state.s, q: transition.from.state.q },
+                    state: DFA2ModelCheckingPair { s: transition.from.state.s, q: transition.from.state.q },
                     agent: transition.from.agent,
                     task: transition.from.task
                 },
@@ -297,12 +302,6 @@ impl TeamMDP {
         let mut r: Vec<f64> = vec![0.0; w.len()];
         let weight = arr1(w);
         let ij_k_mapping = self.ij_mapping();
-
-        let test_state = TeamState {
-            state: DFAModelCheckingPair { s: 0, q: 2 },
-            agent: 0,
-            task: 0
-        };
 
         let mut x_cost_vectors: Vec<Vec<f64>> = vec![Vec::new(); ij_k_mapping.len()];
         let mut y_cost_vectors: Vec<Vec<f64>> = vec![Vec::new(); ij_k_mapping.len()];
@@ -470,9 +469,8 @@ impl TeamMDP {
         done_states
     }
 
-    pub fn modify_final_rewards(&mut self, team_inputs: &Vec<dfa::TeamInput>) {
+    pub fn modify_final_rewards(&mut self, team_inputs: &Vec<dfa2::TeamInput>) {
         let num_tasks: usize = self.num_tasks.clone();
-        let num_agents: usize = self.num_agents.clone();
         for input in team_inputs.iter().
             filter(|x| x.task == num_tasks - 1 ){ // && x.agent == num_agents - 1) {
             for transition in self.transitions.iter_mut().
@@ -492,7 +490,7 @@ impl TeamMDP {
     pub fn default() -> TeamMDP {
         TeamMDP {
             initial: TeamState {
-                state: DFAModelCheckingPair { s: 0, q: 0 },
+                state: DFA2ModelCheckingPair { s: 0, q: 0 },
                 agent: 0,
                 task: 0
             },
@@ -723,7 +721,7 @@ pub fn dfs_sched_debugger<'a>(mu: &'a HashMap<&'a TeamState, String>, states: &'
 
 #[derive(Debug, PartialEq, Clone, Copy, Eq, Hash)]
 pub struct TeamState {
-    pub state: DFAModelCheckingPair,
+    pub state: DFA2ModelCheckingPair,
     pub agent: usize,
     pub task: usize
 }
@@ -731,7 +729,7 @@ pub struct TeamState {
 impl TeamState {
     fn default() -> TeamState {
         TeamState {
-            state: DFAModelCheckingPair { s: 0, q: 0 },
+            state: DFA2ModelCheckingPair { s: 0, q: 0 },
             agent: 0,
             task: 0
         }
@@ -770,7 +768,7 @@ impl Mu {
     fn default() -> Mu {
         Mu {
             team_state: TeamState {
-                state: DFAModelCheckingPair { s: 0, q: 0 },
+                state: DFA2ModelCheckingPair { s: 0, q: 0 },
                 agent: 0,
                 task: 0
             },
@@ -792,7 +790,7 @@ impl TeamInitState {
     fn default() -> TeamInitState {
         TeamInitState {
             state: TeamState {
-                state: DFAModelCheckingPair { s: 0, q: 0 },
+                state: DFA2ModelCheckingPair { s: 0, q: 0 },
                 agent: 0,
                 task: 0
             },

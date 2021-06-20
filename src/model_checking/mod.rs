@@ -6,3 +6,6 @@ pub mod mdp;
 pub mod gurobi_lp;
 pub mod product_dfa;
 pub mod product_dfa_product_mdp;
+pub mod dfa2;
+pub mod mdp2;
+pub mod decomp_team_mdp2;
