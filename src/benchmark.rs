@@ -145,7 +145,6 @@ fn setup(agent: Agent, tasks: Tasks) -> TeamMDP {
 
 pub fn sched_synth_benchmark(c: &mut Criterion) -> &mut Criterion<WallTime> {
     let target: Vec<f64> = vec![2800.0, 2800.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 80.0, 90.0];
-    let regularisation: f64 = 0.1;
     let epsilon: f64 = 0.00001;
     let a: Agent = Agent::TWO;
     let t: Tasks = Tasks::NINE;
@@ -154,8 +153,32 @@ pub fn sched_synth_benchmark(c: &mut Criterion) -> &mut Criterion<WallTime> {
     let team_index_mappings = team_mdp.team_ij_index_mapping();
 
     c.bench_function("scheduler synthesis",|b|
-        b.iter(|| team_mdp.multi_obj_sched_synth(&target, &epsilon, &Rewards::POSITIVE, &regularisation, &team_index_mappings)))
+        b.iter(|| team_mdp.multi_obj_sched_synth(&target, &epsilon, &Rewards::POSITIVE, &team_index_mappings)))
+}
+
+fn loop_with_filter(team_mdp: &TeamMDP) {
+    for state in team_mdp.states.iter() {
+        for t in team_mdp.transitions.iter().filter(|x| x.from == *state) {
+            let mut v: Vec<f64> = Vec::new();
+            for sprime in t.to.iter() {
+                v.push(sprime.p);
+            }
+        }
+    }
+}
+
+pub fn loop_benchmark(c: &mut Criterion) -> &mut Criterion<WallTime> {
+    let a: Agent = Agent::TWO;
+    let t: Tasks = Tasks::TWO;
+    let mut team_mdp = setup(a, t);
+    let w: Vec<f64> = vec![0.25, 0.25, 0.25, 0.25];
+    let epsilon: f64 = 0.00001;
+    let team_index_mappings = team_mdp.team_ij_index_mapping();
+
+    c.bench_function("total rewards", |b|
+        b.iter(|| team_mdp.exp_tot_cost(&w, &epsilon, &team_index_mappings, &Rewards::NEGATIVE)))
 }
 
 criterion_group!(benches, sched_synth_benchmark);
+//criterion_group!(benches, loop_benchmark);
 criterion_main!(benches);

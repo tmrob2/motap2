@@ -1,18 +1,10 @@
 use petgraph::{Graph, graph::NodeIndex};
-use petgraph::algo::{kosaraju_scc, has_path_connecting, all_simple_paths};
 use itertools::Itertools;
-use std::collections::{HashSet, VecDeque, HashMap};
-use std::iter::{FromIterator, Filter};
 extern crate serde_json;
-use serde::Deserialize;
 use super::mdp;
 use super::dfa;
 
-use mdp::*;
 use dfa::*;
-use std::thread::current;
-use petgraph::graph::Node;
-use self::serde_json::ser::State;
 
 pub struct ProductDFA {
     pub states: Vec<Vec<u32>>,

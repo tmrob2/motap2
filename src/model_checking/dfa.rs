@@ -1,8 +1,8 @@
 use petgraph::{Graph, graph::NodeIndex};
-use petgraph::algo::{kosaraju_scc, has_path_connecting, all_simple_paths};
+use petgraph::algo::{has_path_connecting};
 use itertools::Itertools;
-use std::collections::{HashSet, VecDeque, HashMap};
-use std::iter::{FromIterator, Filter};
+use std::collections::{HashSet};
+use std::iter::{FromIterator};
 extern crate serde_json;
 use serde::Deserialize;
 use super::mdp;
@@ -49,7 +49,7 @@ impl DFAProductMDP {
             for mdp_label in mdp.labelling.iter().filter(|x| x.s == state.s) {
                 self.labelling.push(DFAProductLabellingPair{
                     sq: DFAModelCheckingPair { s: state.s, q: state.q },
-                    w: mdp_label.w.to_vec()
+                    w: vec![mdp_label.w.to_string()]
                 });
             }
         }
@@ -69,21 +69,17 @@ impl DFAProductMDP {
                     reward: 0.0
                 };
                 t.reward = transition.rewards; // this is the reward inherited from the MDP
-                //println!("s:{:?}", state);
                 for sprime in transition.s_prime.iter() {
-                    let label = mdp.labelling.iter().find(|x| x.s == sprime.s).unwrap();
-                    //println!("s': {:?}, label: {:?}", sprime.s, label);
-                    for q_prime in dfa.delta.iter().
-                        filter(|x| x.q == state.q && x.w.iter().any(|y| label.w.iter().any(|z| z == y))) {
-                        //println!("q': {:?}", q_prime);
-                        t.sq_prime.push(DFATransitionPair {
-                            state: DFAModelCheckingPair {s: sprime.s, q: q_prime.q_prime},
-                            p: sprime.p
-                        });
+                    for lab in mdp.labelling.iter()
+                        .filter(|l| l.s == sprime.s) {
+                        for q_prime in dfa.delta.iter()
+                            .filter(|q| q.q == state.q && q.w.iter().any(|xx| *xx == lab.w)) {
+                            t.sq_prime.push(DFATransitionPair {
+                                state: DFAModelCheckingPair {s: sprime.s, q: q_prime.q_prime},
+                                p: sprime.p
+                            })
+                        }
                     }
-                }
-                if t.sq_prime.is_empty() {
-                    panic!("state: {:?}", state);
                 }
                 self.transitions.push(t);
             }
@@ -285,9 +281,9 @@ pub fn create_local_product<'a, 'b>(initial_state: &'b DFAModelCheckingPair, mdp
     local_product.initial = *initial_state;
     local_product.create_states(mdp, dfa);
     local_product.create_transitions(mdp, dfa);
-    /*for t in local_product.transitions.iter() {
+    for t in local_product.transitions.iter() {
         println!("t:{:?}", t);
-    }*/
+    }
     let mut g = local_product.generate_graph();
     let initially_reachable = local_product.reachable_from_initial(&g);
     let (prune_states_indices, prune_states) : (Vec<usize>, Vec<DFAModelCheckingPair>) = local_product.prune_candidates(&initially_reachable);

@@ -1,10 +1,10 @@
 use super::mdp2;
-use mdp2::*;
+
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use crate::model_checking::mdp2::{MDP2, MDPLabellingPair};
 use std::hash::Hash;
-use std::iter::FromIterator;
+
 
 #[derive(Debug, Clone)]
 pub struct DFA2Transitions<'a> {
@@ -28,12 +28,28 @@ pub struct DFA2<'a> {
 /// for all words containing "h" up to size 2
 pub fn construct_dfa_transition<'a, 'b>(ps: &'a [HashSet<&'a str>], exact_words: Option<&'b[HashSet<&'b str>]>, q: u32, q_prime: u32,
                                         contains_word: Option<(Option<&'b str>, usize)>, input: &'a mut HashMap<(u32,u32), Vec<&'a HashSet<&'a str>>>,
-                                        not_words: Option<&'a[&'a HashSet<&'a str>]>)
+                                        not_words: Option<&'a[&'a HashSet<&'a str>]>, not_contains: Option<(&'b str, usize)>)
                                         -> &'a mut HashMap<(u32,u32), Vec<&'a HashSet<&'a str>>> {
     match exact_words {
         None => {
             match contains_word {
-                None => {panic!("Should be exact words or contains word but not both and not neither")}
+                None => {
+                    match not_contains {
+                        None => {
+                            panic!("There should be some predicate");
+                        }
+                        Some((x, size)) => {
+                            let words: Vec<_> = ps.iter().filter(|y| y.len() <= size).collect();
+                            let mut new_words: Vec<&HashSet<&str>> = Vec::new();
+                            for w in words.iter() {
+                                if !w.iter().any(|y| *y == x) {
+                                    new_words.push(w);
+                                }
+                            }
+                            input.insert((q,q_prime), new_words);
+                        }
+                    };
+                }
                 Some((x, size)) => {
                     match x {
                         None => {
@@ -52,20 +68,33 @@ pub fn construct_dfa_transition<'a, 'b>(ps: &'a [HashSet<&'a str>], exact_words:
                             };
                         }
                         Some(match_word) => {
-                            let words: Vec<_> = ps.iter().
-                                filter(|y| y.iter().any(|&z| z == match_word) && y.len() <= size).collect();
-                            match not_words {
-                                None => input.insert( (q,q_prime), words),
-                                Some(y) => {
-                                    let mut new_words: Vec<&HashSet<&str>> = Vec::new();
-                                    for w in words.iter() {
-                                        if !y.iter().any(|z|  z == w) {
-                                            new_words.push(w);
+                            match not_contains {
+                                None => {
+                                    let words: Vec<_> = ps.iter().
+                                        filter(|y| y.iter().any(|&z| z == match_word) && y.len() <= size).collect();
+                                    match not_words {
+                                        None => input.insert( (q,q_prime), words),
+                                        Some(y) => {
+                                            let mut new_words: Vec<&HashSet<&str>> = Vec::new();
+                                            for w in words.iter() {
+                                                if !y.iter().any(|z|  z == w) {
+                                                    new_words.push(w);
+                                                }
+                                            }
+                                            input.insert((q,q_prime), new_words)
                                         }
-                                    }
-                                    input.insert((q,q_prime), new_words)
+                                    };
                                 }
-                            };
+                                Some((not_z, _size2)) => {
+                                    let words: Vec<_> = ps.iter().
+                                        filter(|y| y.iter().any(|&z| z == match_word) && y.len() <= size).collect();
+                                    // ignore not_words
+                                    let words_not_z: Vec<_> = words.iter().
+                                        filter(|z| !z.iter().any(|z1| *z1 == not_z)).
+                                        map(|&w| w).collect();
+                                    input.insert((q,q_prime), words_not_z);
+                                }
+                            }
                         }
                     }
                 }
@@ -154,7 +183,7 @@ pub fn reachable_from_initial<'a>(states: &'a [DFA2ModelCheckingPair], transitio
             }
         }
     }
-    reachable.truncate(visited.iter().enumerate().filter(|(i,x)| **x).count());
+    reachable.truncate(visited.iter().enumerate().filter(|(_i,x)| **x).count());
     for (i, truth) in visited.iter().enumerate() {
         if *truth {
             reachable.push(&states[i]);
@@ -210,7 +239,7 @@ pub fn modify_complete<'a>(states: &'a mut Vec<&'a DFA2ModelCheckingPair>, trans
                             w: vec![compl_l]
                         });
                     },
-                    Some(x) => {}
+                    Some(_x) => {}
                 }
                 add_s.insert(new_state);
             }
@@ -224,17 +253,17 @@ pub fn edit_labelling<'a, 'b>(labelling: &'a mut Vec<DFA2ProductLabellingPair<'a
     -> &'a mut Vec<DFA2ModLabelPair<'a>> { //&'a mut [DFA2ProductLabellingPair] {
     for l in labelling.iter() {
         if l.sq == initial {
-            let mut h_new = l.w.iter().map(|&x| new_hash(x, ini)).collect::<Vec<HashSet<&'a str>>>();
+            let h_new = l.w.iter().map(|&x| new_hash(x, ini)).collect::<Vec<HashSet<&'a str>>>();
             mod_labelling.push(DFA2ModLabelPair { sq: l.sq, w: h_new })
         } else if dfa.dead.iter().any(|x| *x == l.sq.q) && l.sq.s == mdp.initial {
-            let mut h_new = l.w.iter().map(|&x| new_hash(x, fai)).collect::<Vec<HashSet<&'a str>>>();
+            let h_new = l.w.iter().map(|&x| new_hash(x, fai)).collect::<Vec<HashSet<&'a str>>>();
             mod_labelling.push(DFA2ModLabelPair { sq: l.sq, w: h_new })
         } else if dfa.acc.iter().any(|x| *x == l.sq.q) && l.sq.s == mdp.initial {
-            let mut h_new = l.w.iter().map(|&x| new_hash(x, suc)).collect::<Vec<HashSet<&'a str>>>();
+            let h_new = l.w.iter().map(|&x| new_hash(x, suc)).collect::<Vec<HashSet<&'a str>>>();
             mod_labelling.push(DFA2ModLabelPair { sq: l.sq, w: h_new })
         }
         else {
-            let mut h_new = l.w.iter().map(|&x| x.clone()).collect::<Vec<HashSet<&'a str>>>();
+            let h_new = l.w.iter().map(|&x| x.clone()).collect::<Vec<HashSet<&'a str>>>();
             mod_labelling.push(DFA2ModLabelPair { sq: l.sq, w: h_new })
         }
     }
@@ -255,12 +284,12 @@ pub fn create_local_product<'a>(mdp: &'a MDP2, dfa: &'a DFA2, ini: &'a str, fai:
                                 add_l: &'a mut Vec<NonRefDFA2ProductLabellingPair<'a>>)
                                 -> (&'a mut Vec<&'a DFA2ModelCheckingPair>,&'a mut Vec<DFA2ProductTransition>, &'a mut Vec<DFA2ModLabelPair<'a>>) {
     // transitions
-    let mut trans_v = create_prod_transitions(&mdp, &dfa, &b_state_space[..], trans_v);
-    let (mut reach_v, mut trans_v)  = reachable_from_initial(&b_state_space[..], trans_v, &init_state, reach_v);
+    let trans_v = create_prod_transitions(&mdp, &dfa, &b_state_space[..], trans_v);
+    let (reach_v, trans_v)  = reachable_from_initial(&b_state_space[..], trans_v, &init_state, reach_v);
     // product labelling
-    let (mut reach_v, mut label_v) = create_labelling(reach_v, &mdp.labelling[..], label_v);
+    let (reach_v, label_v) = create_labelling(reach_v, &mdp.labelling[..], label_v);
     // modifications
-    let (add_s, add_t, add_l, mut reach_v, mut trans_v) =
+    let (add_s, add_t, add_l, reach_v, trans_v) =
         modify_complete(reach_v, trans_v, &dfa, compl_hsh, add_s, add_t, add_l);
     // ---------------------------------------------------
     // Update Labels, Transitions, and Modification States
@@ -279,7 +308,7 @@ pub fn create_local_product<'a>(mdp: &'a MDP2, dfa: &'a DFA2, ini: &'a str, fai:
     for s in add_s.iter() {
         reach_v.push(s)
     }
-    let mut mod_l_v = edit_labelling(label_v, mod_l_v, &dfa, &mdp, &init_state, ini, fai, suc);
+    let mod_l_v = edit_labelling(label_v, mod_l_v, &dfa, &mdp, &init_state, ini, fai, suc);
 
     (reach_v, trans_v, mod_l_v)
 }

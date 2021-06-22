@@ -264,10 +264,7 @@ fn main() {
         }
     }
 
-    if test {
 
-
-    }
 
     if team_type == 1 {
         let mut product_dfa: ProductDFA = ProductDFA::default(); // Product DFA has a lifetime of a and lives for the entirety of Team
@@ -469,16 +466,43 @@ fn main() {
 
     if stats {
         println!("Model Stats");
-        //team_mdp.statistics();
+        let(s,t) = team_mdp.statistics();
+        println!("states: {}, transitions: {}", s, t);
+    }
+
+    if test {
+        //let w: Vec<f64> = vec![1.0 / (team_mdp.num_agents + team_mdp.num_tasks) as f64; team_mdp.num_agents + team_mdp.num_tasks];
+        let w = vec![0.0, 0.0, 1.0, 0.0];
+        let mut v: Vec<Duration> = Vec::with_capacity(100);
+        let (state_index_map, transition_map, state_to_trans_cardinality,
+            state_to_trans_start_fin_map, task_agent_map, sprime_state_index_map, task_agent_sprime_map)
+            = model_checking::decomp_team_mdp::vector_index_mapping(&team_mdp.states[..],
+                                                                    &team_mdp.transitions[..], &team_mdp.num_agents, &team_mdp.num_tasks);
+        let team_init_index = team_mdp.states.iter().position(|x| *x == team_mdp.initial).unwrap();
+        for i in 0..1 {
+            let start = Instant::now();
+            let safe_ret = opt_exp_tot_cost(&w, &epsilon, &team_mdp.states[..], &team_mdp.transitions[..],
+                             &Rewards::NEGATIVE, &team_mdp.num_agents, &team_mdp.num_tasks, &state_index_map,
+                             &transition_map, &state_to_trans_cardinality, &state_to_trans_start_fin_map,
+                             &task_agent_map, &sprime_state_index_map, &task_agent_sprime_map, &team_init_index);
+            let duration = start.elapsed();
+            println!("duration: {:?}", duration);
+            v.push(duration);
+            match safe_ret {
+                None => {}
+                Some((mu, r)) => {println!("r: {:?}", r)}
+            }
+        }
+
+
     }
 
     if run {
         let rewards: Rewards = Rewards::NEGATIVE;
-        let team_index_mappings = team_mdp.team_ij_index_mapping();
         /**/
 
         let start = Instant::now();
-        let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon, &rewards, &team_index_mappings);
+        let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon, &rewards);
         let duration = start.elapsed();
         println!("Model checking time: {:?}", duration);
         /*

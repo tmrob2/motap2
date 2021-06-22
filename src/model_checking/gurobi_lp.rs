@@ -146,7 +146,7 @@ pub fn lp5(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Option<Vec<f64>> {
     //println!("kappa: {:?}", model.get(gurobi::attr::KappaExact).unwrap());
     //println!("model obj: {:?}", model.get(gurobi::attr::ObjVal).unwrap());
     let mut vars = Vec::new();
-    for i in (0..*dim) {
+    for i in 0..*dim {
         let var = v.get(&format!("w{}",i)).unwrap();
         vars.push(var.clone());
     }

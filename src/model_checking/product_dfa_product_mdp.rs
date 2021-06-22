@@ -7,10 +7,8 @@ use dfa::DFA;
 use itertools::Itertools;
 use petgraph::Graph;
 use petgraph::csr::NodeIndex;
-use petgraph::algo::has_path_connecting;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashSet};
 use std::hash::Hash;
-use crate::model_checking::team_mdp::ProductDFATeamState;
 
 #[derive(Debug, Clone)]
 pub struct ProductDFAProductMDP {
@@ -122,16 +120,12 @@ pub fn create_transitions<'a, 'b>(states: &'b [StatePair], mdp: &'a MDP, dfa: &'
                         filter(|x| x.s == mdp_sprime.s) {
                         for dfa_t in dfa.delta.iter().
                             filter(|x| x.q == *state.q && x.w.iter().
-                                any(|y| if !label.w.is_empty() {
-                                    label.w.iter().any(|z|*y == format!("{}{}",z,task))
-                                } else {
-                                    true
-                                })){
+                                any(|y| *y == if label.w != "" {format!("{}{}",label.w,task)} else {label.w.to_string()})){
                             q_prime = dfa_t.q_prime.to_vec();
                         }
                         if q_prime.is_empty() {
                             if *verbose == 3 {
-                                println!("No transition was found for (q: {:?}, w: {:?})", state.q, label.w);
+                                println!("No transition was found for (q: {:?}, w: {})", state.q, label.w);
                                 println!("Available transitions are: ");
                                 for dfa_t in dfa.delta.iter().
                                     filter(|q| q.q == *state.q) {
@@ -505,7 +499,7 @@ pub fn remove_transitions<'a>(transitions: &'a [ProdMDPTransition], remove: &'a 
     new_transitions
 }
 
-pub fn append_states<'a>(states: &'a [StatePair], mod_states: &'a [StatePair]) -> Vec<StatePair>    {
+pub fn append_states<'a>(states: &'a [StatePair], mod_states: &'a [StatePair]) -> Vec<StatePair> {
     let mut new_states: Vec<StatePair> = vec![StatePair{ s: 0, q: vec![] }; states.len() + mod_states.len()];
     let mut count: usize = 0;
     for s in states.iter() {

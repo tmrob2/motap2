@@ -1,18 +1,18 @@
-use std::num::ParseIntError;
 use std::io::BufReader;
 use std::path::Path;
 use std::error::Error;
 use std::fs::File;
 extern crate serde_json;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize};
 use super::mdp;
 use super::dfa;
 
 use mdp::*;
 use dfa::*;
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashSet};
 use std::iter::FromIterator;
 use std::hash::Hash;
+use ndarray::{arr1, Array1};
 
 pub fn absolute_diff_vect(a: &Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
     let a_b: Vec<_> = a.iter().zip(b.into_iter()).collect();
@@ -20,6 +20,11 @@ pub fn absolute_diff_vect(a: &Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
     for (i, (val1,val2)) in a_b.iter().enumerate() {
         c[i] = (**val1 - **val2).abs();
     }
+    c
+}
+
+pub fn opt_absolute_diff_vect(a: &[f64], b: &[f64]) -> Array1<f64> {
+    let c: Array1<f64> = arr1(b) - &arr1(a);
     c
 }
 

@@ -5,21 +5,13 @@ use super::product_dfa;
 use super::product_dfa_product_mdp;
 use super::gurobi_lp;
 use petgraph::{Graph, graph::NodeIndex};
-use std::collections::{HashSet, VecDeque, HashMap};
-use ndarray::{arr1, NdIndex};
-use rand::seq::SliceRandom;
-use regex::Regex;
+use std::collections::{HashMap};
+use ndarray::{arr1};
 
 use helper_methods::*;
-use dfa::*;
-use mdp::*;
-use product_dfa::*;
 use product_dfa_product_mdp::*;
 use gurobi_lp::*;
-use petgraph::graph::Node;
-use crate::model_checking::decomp_team_mdp::{TeamStateIndex, TeamStateIndexHelper, Rewards};
-use itertools::Itertools;
-use std::borrow::Borrow;
+use crate::model_checking::decomp_team_mdp::{TeamStateIndex, Rewards};
 
 pub struct DFAProductTeamMDP<'a> {
     pub initial: ProductDFATeamState<'a>,
@@ -302,8 +294,6 @@ impl <'a>DFAProductTeamMDP<'a> {
                 extreme_points[k][k] = 0.7;
             }*/
             extreme_points[k][k] = 1.0;
-
-
         }*/
 
         let w_extr: Vec<f64> = vec![1.0 / (self.num_agents + self.num_tasks) as f64; self.num_agents + self.num_tasks];
