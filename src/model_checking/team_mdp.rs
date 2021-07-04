@@ -348,7 +348,10 @@ impl <'a>DFAProductTeamMDP<'a> {
         }
         let v = witness(&hullset, &target, &dim, &self.num_agents);
         println!("v: {:?}", v);
-        alg1_output.v = v;
+        match v {
+            None => {}
+            Some(x) => {alg1_output.v = x}
+        };
         alg1_output.mu = mu_vect;
         alg1_output.hullset =  hullset;
         alg1_output

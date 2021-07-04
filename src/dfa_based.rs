@@ -474,17 +474,16 @@ fn main() {
         //let w: Vec<f64> = vec![1.0 / (team_mdp.num_agents + team_mdp.num_tasks) as f64; team_mdp.num_agents + team_mdp.num_tasks];
         let w = vec![0.0, 0.0, 1.0, 0.0];
         let mut v: Vec<Duration> = Vec::with_capacity(100);
-        let (state_index_map, transition_map, state_to_trans_cardinality,
-            state_to_trans_start_fin_map, task_agent_map, sprime_state_index_map, task_agent_sprime_map)
-            = model_checking::decomp_team_mdp::vector_index_mapping(&team_mdp.states[..],
+        let (transition_map, state_to_trans_cardinality,
+            state_to_trans_start_fin_map, sprime_state_index_map)
+            = model_checking::decomp_team_mdp::vector_index_mapping_non_iter(&team_mdp.states[..],
                                                                     &team_mdp.transitions[..], &team_mdp.num_agents, &team_mdp.num_tasks);
         let team_init_index = team_mdp.states.iter().position(|x| *x == team_mdp.initial).unwrap();
         for i in 0..1 {
             let start = Instant::now();
-            let safe_ret = opt_exp_tot_cost(&w, &epsilon, &team_mdp.states[..], &team_mdp.transitions[..],
-                             &Rewards::NEGATIVE, &team_mdp.num_agents, &team_mdp.num_tasks, &state_index_map,
-                             &transition_map, &state_to_trans_cardinality, &state_to_trans_start_fin_map,
-                             &task_agent_map, &sprime_state_index_map, &task_agent_sprime_map, &team_init_index);
+            let safe_ret = opt_exp_tot_cost_non_iter(&w, &epsilon, &team_mdp.states[..], &team_mdp.transitions[..],
+                             &Rewards::NEGATIVE, &team_mdp.num_agents, &team_mdp.num_tasks, &transition_map, &state_to_trans_cardinality,
+                                                     &state_to_trans_start_fin_map, &sprime_state_index_map[..], &team_init_index);
             let duration = start.elapsed();
             println!("duration: {:?}", duration);
             v.push(duration);
@@ -493,36 +492,32 @@ fn main() {
                 Some((mu, r)) => {println!("r: {:?}", r)}
             }
         }
-
-
     }
 
     if run {
         let rewards: Rewards = Rewards::NEGATIVE;
         /**/
-
+        let mut v: Vec<Duration> = Vec::with_capacity(100);
+        /*for i in 0..100 {
+            let start = Instant::now();
+            let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon, &rewards, &true);
+            //let output = team_mdp.multi_obj_sched_synth_non_iter(&target_parse, &epsilon, &rewards);
+            let duration = start.elapsed();
+            v.push(duration);
+        }*/
+        let sum_duration = v.iter().fold(0.0, |acc, &sum| acc + sum.as_secs_f64());
+        println!("ave duration:{}", sum_duration/ 100.0);
         let start = Instant::now();
-        let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon, &rewards);
+        let output = team_mdp.multi_obj_sched_synth(&target_parse, &epsilon, &rewards, &true);
+        //let output = team_mdp.multi_obj_sched_synth_non_iter(&target_parse, &epsilon, &rewards);
         let duration = start.elapsed();
         println!("Model checking time: {:?}", duration);
-        /*
-        match output {
-            Some(x) => {
-                match x.v {
-                    None => {println!("witness vector not found, graph merging aborted");}
-                    Some(v) => {
-                        println!("v: {:?}", v);
-                        let graph = TeamMDP::dfs_merging(&team_mdp.initial, &output.mu, &output.v, &team_mdp.transitions[..]);
-                        let dot = format!("{}", Dot::new(&graph));
-                        let mut file = File::create("merged_sched.dot").unwrap();
-                        file.write_all(&dot.as_bytes());
-                    }
-                }
-            },
-            _ => {println!("No output from scheduler synthesis!");}
-        }
-
-         */
+        println!("v: {:?}", v);
+        let graph = dfs_merging(&team_mdp.initial, &output.mu,
+                                &team_mdp.states[..], &output.v, &team_mdp.transitions[..], None);
+        let dot = format!("{}", Dot::new(&graph));
+        let mut file = File::create("diagnostics/merged_sched.dot").unwrap();
+        file.write_all(&dot.as_bytes());
     }
 }
 

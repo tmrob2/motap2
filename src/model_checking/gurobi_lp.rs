@@ -3,7 +3,7 @@ use gurobi::*;
 use std::collections::HashMap;
 use super::decomp_team_mdp;
 
-pub fn witness(hullset: &Vec<Vec<f64>>, target: &Vec<f64>, dim: &usize, num_agents: &usize) -> Vec<f64> {
+pub fn witness(hullset: &Vec<Vec<f64>>, target: &Vec<f64>, dim: &usize, num_agents: &usize) -> Option<Vec<f64>> {
 
     //let env = Env::new().unwrap();
     let mut env = gurobi::Env::new("").unwrap();
@@ -68,16 +68,17 @@ pub fn witness(hullset: &Vec<Vec<f64>>, target: &Vec<f64>, dim: &usize, num_agen
     //model.write("logfile.lp").unwrap();
 
     model.optimize().unwrap();
-    println!("model status: {:?}", model.status());
+    //println!("model status: {:?}", model.status());
     //println!("model obj: {:?}", model.get(gurobi::attr::ObjVal).unwrap());
     let mut vars = Vec::new();
     for i in 0..hullset.len() {
         let var = v.get(&format!("u{}",i)).unwrap();
         vars.push(var.clone());
     }
-    let val = model.get_values(attr::X, &vars[..]).unwrap();
-
-    val
+    match model.get_values(attr::X, &vars[..]) {
+        Ok(x) => {Some(x)}
+        Err(e) => { println!("unable to retrieve var because: {:?}", e); None}
+    }
 
 }
 

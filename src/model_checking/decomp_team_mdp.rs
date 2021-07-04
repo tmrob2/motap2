@@ -3,13 +3,14 @@ use super::dfa;
 use super::mdp;
 use super::gurobi_lp;
 use petgraph::{Graph};
-use std::collections::{HashMap};
+use std::collections::{HashMap, HashSet};
 use ndarray::{arr1};
 
 use helper_methods::*;
 use dfa::*;
 use mdp::*;
 use gurobi_lp::*;
+use std::time::Instant;
 
 pub struct TeamMDP {
     pub initial: TeamState,
@@ -290,6 +291,8 @@ impl TeamMDP {
         mapping
     }
 
+    // This function is deprecated in favour of the general exp tot value iteration outside of the
+    // team implementation
     pub fn exp_tot_cost<'a>(&self, w: &[f64], eps: &f64, team_index: &'a HashMap<(usize, usize), TeamStateIndexHelper>, rewards: &Rewards) -> Option<(HashMap<&'a TeamState, String>, Vec<f64>)> {
         let mut mu: HashMap<&'a TeamState, String> = HashMap::new();
         let mut r: Vec<f64> = vec![0.0; w.len()];
@@ -503,7 +506,8 @@ impl TeamMDP {
         }
     }
 
-    pub fn multi_obj_sched_synth<'a>(&self, target: &Vec<f64>, eps: &f64, rewards: &Rewards) -> Alg1Output {
+    /// Iterative version of multi-objective model checking
+    pub fn multi_obj_sched_synth<'a>(&self, target: &Vec<f64>, eps: &f64, rewards: &Rewards, verbose: &bool) -> Alg1Output {
         let mut hullset: Vec<Vec<f64>> = Vec::new();
         let mut mu_vect: Vec<Vec<String>> = Vec::new();
         let mut alg1_output: Alg1Output = Alg1Output{
@@ -512,10 +516,17 @@ impl TeamMDP {
             hullset: vec![]
         };
 
-        println!("num tasks: {}, num agents {}", self.num_tasks, self.num_agents);
+        if *verbose {
+            println!("num tasks: {}, num agents {}", self.num_tasks, self.num_agents);
+        }
+        let start = Instant::now();
         let (state_index_map, transition_map, state_to_trans_cardinality,
             state_to_trans_start_fin_map, task_agent_map, sprime_state_index_map, task_agent_sprime_map)
             = vector_index_mapping(&self.states[..],&self.transitions[..], &self.num_agents, &self.num_tasks);
+        let duration = start.elapsed();
+        if *verbose {
+            println!("cache duration: {:?}", duration);
+        }
 
         let team_init_index = self.states.iter().position(|x| *x == self.initial).unwrap();
 
@@ -524,7 +535,9 @@ impl TeamMDP {
         for k in 0..(self.num_tasks + self.num_agents) {
             extreme_points[k][k] = 1.0;
             let w_extr: &Vec<f64> = &extreme_points[k];
-            println!("w: {:?}", w_extr);
+            if *verbose {
+                println!("w: {:?}", w_extr);
+            }
             let safe_ret = opt_exp_tot_cost(&w_extr[..], &eps, &self.states[..], &self.transitions[..],
                                             &Rewards::NEGATIVE, &self.num_agents, &self.num_tasks, &state_index_map,
                                             &transition_map, &state_to_trans_cardinality, &state_to_trans_start_fin_map,
@@ -537,40 +550,49 @@ impl TeamMDP {
                 None => panic!("No value was returned from the maximisation")
             }
         }
-
-        println!("extreme points: ");
-        for k in hullset.iter() {
-            print!("p: [");
-            for (i, j) in k.iter().enumerate() {
-                if i == 0 {
-                    print!("{0:.1$}", j, 2);
-                } else {
-                    print!(" ,{0:.1$}", j, 2);
+        if *verbose {
+            println!("extreme points: ");
+            for k in hullset.iter() {
+                print!("p: [");
+                for (i, j) in k.iter().enumerate() {
+                    if i == 0 {
+                        print!("{0:.1$}", j, 2);
+                    } else {
+                        print!(" ,{0:.1$}", j, 2);
+                    }
                 }
+                print!("]");
+                println!();
             }
-            print!("]");
-            println!();
         }
         let dim = self.num_tasks + self.num_agents;
         let t_arr1 = arr1(target);
         let mut counter: u32 = 1;
         let mut w_new = lp5(&hullset, target, &dim);
         while w_new != None {
-            println!("w' :{:?}", w_new);
+            if *verbose {
+                println!("w' :{:?}", w_new);
+            }
             let safe_ret = opt_exp_tot_cost(&w_new.as_ref().unwrap()[..], &eps, &self.states[..], &self.transitions[..],
                                             &Rewards::NEGATIVE, &self.num_agents, &self.num_tasks, &state_index_map,
                                             &transition_map, &state_to_trans_cardinality, &state_to_trans_start_fin_map,
                                             &task_agent_map, &sprime_state_index_map, &task_agent_sprime_map, &team_init_index);
             match safe_ret {
                 Some((mu_new, r)) => {
-                    println!("new r: {:?}", r);
+                    if *verbose {
+                        println!("new r: {:?}", r);
+                    }
                     let weight_arr1 = arr1(&w_new.as_ref().unwrap());
                     let r_arr1 = arr1(&r);
                     let wr_dot = weight_arr1.dot(&r_arr1);
                     let wt_dot = weight_arr1.dot(&t_arr1);
-                    println!("<w,r>: {}, <w,t>: {}", wr_dot, wt_dot);
+                    if *verbose {
+                        println!("<w,r>: {}, <w,t>: {}", wr_dot, wt_dot);
+                    }
                     if wr_dot < wt_dot {
-                        println!("Multi-objective satisfaction not possible");
+                        if *verbose {
+                            println!("Multi-objective satisfaction not possible");
+                        }
                         return alg1_output;
                     }
                     hullset.push(r);
@@ -580,10 +602,130 @@ impl TeamMDP {
             }
             w_new = lp5(&hullset, target, &dim);
         }
-        println!("Constructing witness");
+        if *verbose {
+            println!("Constructing witness");
+        }
         let v = witness(&hullset, &target, &dim, &self.num_agents);
-        println!("v: {:?}", v);
-        alg1_output.v = v;
+        if *verbose {
+            println!("v: {:?}", v);
+        }
+        match v {
+            None => {}
+            Some(x) => {alg1_output.v = x}
+        };
+        alg1_output.mu = mu_vect;
+        alg1_output.hullset =  hullset;
+        alg1_output
+    }
+
+    /// The non iterative version of multi-objective value iteration, just loops over the state space to generate results
+    pub fn multi_obj_sched_synth_non_iter<'a>(&self, target: &Vec<f64>, eps: &f64, rewards: &Rewards, verbose: &bool) -> Alg1Output {
+        let mut hullset: Vec<Vec<f64>> = Vec::new();
+        let mut mu_vect: Vec<Vec<String>> = Vec::new();
+        let mut alg1_output: Alg1Output = Alg1Output{
+            v: vec![],
+            mu: vec![],
+            hullset: vec![]
+        };
+        if *verbose {
+            println!("num tasks: {}, num agents {}", self.num_tasks, self.num_agents);
+        }
+        let start = Instant::now();
+        let (transition_map, state_to_trans_cardinality,
+            state_to_trans_start_fin_map, sprime_state_index_map)
+            = vector_index_mapping_non_iter(&self.states[..], &self.transitions[..], &self.num_agents, &self.num_tasks);
+        let duration = start.elapsed();
+        if *verbose {
+            println!("cache duration: {:?}", duration);
+        }
+        let team_init_index = self.states.iter().position(|x| *x == self.initial).unwrap();
+
+        let mut extreme_points: Vec<Vec<f64>> = vec![vec![0.0; self.num_agents + self.num_tasks]; self.num_agents + self.num_tasks];
+
+
+        for k in 0..(self.num_tasks + self.num_agents) {
+            extreme_points[k][k] = 1.0;
+            let w_extr: &Vec<f64> = &extreme_points[k];
+            if *verbose {
+                println!("w: {:?}", w_extr);
+            }
+
+            let safe_ret = opt_exp_tot_cost_non_iter(&w_extr[..], &eps, &self.states[..], &self.transitions[..],
+                                            &Rewards::NEGATIVE, &self.num_agents, &self.num_tasks, &transition_map,
+                                                     &state_to_trans_cardinality, &state_to_trans_start_fin_map,
+                                            &sprime_state_index_map, &team_init_index);
+            match safe_ret {
+                Some((mu_new, r)) => {
+                    hullset.push(r);
+                    mu_vect.push(mu_new);
+                },
+                None => panic!("No value was returned from the maximisation")
+            }
+        }
+        if *verbose {
+            println!("extreme points: ");
+
+            for k in hullset.iter() {
+                print!("p: [");
+                for (i, j) in k.iter().enumerate() {
+                    if i == 0 {
+                        print!("{0:.1$}", j, 2);
+                    } else {
+                        print!(" ,{0:.1$}", j, 2);
+                    }
+                }
+                print!("]");
+                println!();
+            }
+        }
+        let dim = self.num_tasks + self.num_agents;
+        let t_arr1 = arr1(target);
+        let mut counter: u32 = 1;
+        let mut w_new = lp5(&hullset, target, &dim);
+        while w_new != None {
+            if *verbose {
+                println!("w' :{:?}", w_new);
+            }
+            let safe_ret = opt_exp_tot_cost_non_iter(&w_new.as_ref().unwrap()[..], &eps, &self.states[..], &self.transitions[..],
+                                            &Rewards::NEGATIVE, &self.num_agents, &self.num_tasks,&transition_map, &state_to_trans_cardinality,
+                                                     &state_to_trans_start_fin_map,
+                                             &sprime_state_index_map, &team_init_index);
+            match safe_ret {
+                Some((mu_new, r)) => {
+                    if *verbose {
+                        println!("new r: {:?}", r);
+                    }
+                    let weight_arr1 = arr1(&w_new.as_ref().unwrap());
+                    let r_arr1 = arr1(&r);
+                    let wr_dot = weight_arr1.dot(&r_arr1);
+                    let wt_dot = weight_arr1.dot(&t_arr1);
+                    if *verbose {
+                        println!("<w,r>: {}, <w,t>: {}", wr_dot, wt_dot);
+                    }
+                    if wr_dot < wt_dot {
+                        if *verbose {
+                            println!("Multi-objective satisfaction not possible");
+                        }
+                        return alg1_output;
+                    }
+                    hullset.push(r);
+                    mu_vect.push(mu_new);
+                },
+                None => panic!("No value was returned from the maximisation")
+            }
+            w_new = lp5(&hullset, target, &dim);
+        }
+        if *verbose {
+            println!("Constructing witness");
+        }
+        let v = witness(&hullset, &target, &dim, &self.num_agents);
+        if *verbose {
+            println!("v: {:?}", v);
+        }
+        match v {
+            None => {}
+            Some(x) => {alg1_output.v = x}
+        };
         alg1_output.mu = mu_vect;
         alg1_output.hullset =  hullset;
         alg1_output
@@ -629,10 +771,10 @@ impl TeamMDP {
                     from_node_index = x;
                 }
             }
-
+            let mut c_prime: Vec<u32> = Vec::new();
             for transition in transitions.iter().
                 filter(|x| x.from == *s_val) {
-                let mut c_prime: Vec<u32> = Vec::new();
+
                 for (j, mu) in sched.iter().enumerate().
                     filter(|(j,_x)| c_val.iter().any(|y| *y == *j as u32) ) {
                     let mu_s = mu.get(s_val).unwrap();
@@ -640,18 +782,147 @@ impl TeamMDP {
                         c_prime.push(j as u32);
                     }
                 }
-                if !c_prime.is_empty() {
-                    for sprime in transition.to.iter() {
-                        //println!("s: {:?}", s);
-                        let v_prime_vect: Vec<f64> = v.iter().enumerate().
-                            filter(|(x, y)| c_prime.iter().any(|z| *x == *z as usize)).map(|(x,y)| *y).collect();
-                        let v_prime_sum: f64 = v_prime_vect.iter().sum();
-                        //println!("v_prime_vect: {:?}, v_prime: {}", v_prime_vect, v_prime_sum);
-                        let v_vect: Vec<f64> = v.iter().enumerate().
-                            filter(|(x,y)| c_val.iter().any(|z| *x == *z as usize)).map(|(x,y)| *y).collect();
-                        let v_sum: f64 = v_vect.iter().sum();
-                        //println!("v_vect: {:?}, v_prime: {}", v_vect, v_sum);
-                        let p = v_prime_sum / v_sum;
+            }
+            if !c_prime.is_empty() {
+                for c in c_prime.iter() {
+                    for transition in transitions.iter().
+                        filter(|x| x.from == *s_val && x.a == *sched[*c as usize].get(&s_val).unwrap()) {
+                        for sprime in transition.to.iter() {
+                            //println!("s: {:?}", s);
+                            let v_prime_vect: Vec<f64> = v.iter().enumerate().
+                                filter(|(x, y)| c_prime.iter().any(|z| *x == *z as usize)).map(|(x,y)| *y).collect();
+                            let v_prime_sum: f64 = v_prime_vect.iter().sum();
+                            //println!("v_prime_vect: {:?}, v_prime: {}", v_prime_vect, v_prime_sum);
+                            let v_vect: Vec<f64> = v.iter().enumerate().
+                                filter(|(x,y)| c_val.iter().any(|z| *x == *z as usize)).map(|(x,y)| *y).collect();
+                            let v_sum: f64 = v_vect.iter().sum();
+                            //println!("v_vect: {:?}, v_prime: {}", v_vect, v_sum);
+                            let p = v_prime_sum / v_sum;
+                            let to_vertex = match hashmap_states {
+                                None => {
+                                    format!(
+                                        "(({},{},{},{}),({:?})",
+                                        sprime.state.state.s, sprime.state.state.q, sprime.state.agent, sprime.state.task,
+                                        c_prime
+                                    )
+                                }
+                                Some(x) => {
+                                    if sprime.state.state.s == 999 {
+                                        format!(
+                                            "(({},{},{},{}),({:?})",
+                                            sprime.state.state.s, sprime.state.state.q, sprime.state.agent, sprime.state.task,
+                                            c_prime
+                                        )
+                                    } else {
+                                        let mdp_sprime = x.get(&sprime.state.state.s).unwrap();
+                                        format!(
+                                            "((({},{}),{},{},{}),({:?})",
+                                            mdp_sprime.g.0, mdp_sprime.g.1, sprime.state.state.q, sprime.state.agent, sprime.state.task,
+                                            c_prime
+                                        )
+                                    }
+
+                                }
+                            };
+                            let destination_node_index;
+                            match graph.node_indices().find(|x| graph[*x] == to_vertex) {
+                                None => {
+                                    // The vertex wasn't found this means that we can add the vertex without complaint
+                                    destination_node_index = graph.add_node(to_vertex);
+                                    s.push((&sprime.state, c_prime.to_vec()));
+                                }
+                                Some(x) => {
+                                    // this doesn't necessarily mean that the algorithm doesn't work,
+                                    // let's do some investigation to work out if this is a problem or not
+                                    destination_node_index = x;
+                                }
+                            }
+                            graph.add_edge(from_node_index, destination_node_index, format!("({},{1:.2$})", transition.a, p.to_string(), 5));
+                        }
+                    }
+                }
+            }
+        }
+        graph
+    }
+
+    pub fn statistics(&self) -> (usize,usize) {
+        (self.states.len(), self.transitions.len())
+    }
+}
+
+pub fn dfs_merging<'a>(initial: &'a TeamState, sched: &'a [Vec<String>], states: &'a [TeamState],
+                       v: &'a [f64], transitions: &'a [TeamTransition],
+                       hashmap_states: Option<&'a HashMap<u32, MDPLongState<'a>>>) -> Graph<String, String> {
+    let mut graph: Graph<String, String> = Graph::new();
+    let mut s = Vec::new();
+    let c0: Vec<u32> = (0..(v.len() as u32)).collect();
+    s.push((initial, c0));
+    while !s.is_empty() {
+        let (s_val, c_val) = s.pop().unwrap();
+        let s_val_index = states.iter().position(|x| x == s_val).unwrap();
+        let vertex = match hashmap_states {
+            None => {
+                format!("(({},{},{},{}),({:?})",
+                        s_val.state.s, s_val.state.q, s_val.agent, s_val.task,
+                        c_val)
+            }
+            Some(x) => {
+                if s_val.state.s == 999 {
+                    format!("(({},{},{},{}),({:?})",
+                            s_val.state.s, s_val.state.q, s_val.agent, s_val.task,
+                            c_val)
+                } else {
+                    let mdp_coord = x.get(&s_val.state.s).unwrap();
+                    format!("((({},{}),{},{},{}),({:?})",
+                            mdp_coord.g.0, mdp_coord.g.1, s_val.state.q, s_val.agent, s_val.task,
+                            c_val)
+                }
+            }
+        };
+        let from_node_index;
+        match graph.node_indices().find(|x| graph[*x] == vertex) {
+            None => {
+                // Add the vertex to the graph
+                //println!("vertex: {:?}", vertex);
+                from_node_index = graph.add_node(vertex);
+
+            }
+            Some(x) => {
+                // the note index already exists and we move on
+                from_node_index = x;
+            }
+        }
+
+        // first get the actions of the transition from the state
+        let actions: Vec<&str> = transitions.iter().
+            filter(|x| x.from == *s_val).
+            map(|x| &x.a[..]).collect::<HashSet<_>>().into_iter().collect();
+        //println!("unique actions: {:?}", actions);
+        for a in actions.iter() {
+            let mut c_prime: Vec<u32> = Vec::new();
+            for c in 0..c_val.len() {
+                let c_str = &sched[c_val[c] as usize][s_val_index];
+                //println!("available actions: {:?}", c_str);
+                if c_str == *a {
+                    c_prime.push(c_val[c] as u32);
+                }
+            }
+            //println!("s: ({},{},{},{}), c: {:?}, -> c':{:?}", s_val.state.s, s_val.state.q, s_val.agent, s_val.task, c_val, c_prime);
+            for transition in transitions.iter().
+                filter(|x| x.from == *s_val && x.a == *a) {
+                for sprime in transition.to.iter() {
+                    let mut v_prime_sum = 0f64;
+                    for c in 0..c_prime.len() {
+                        v_prime_sum += v[c_prime[c] as usize];
+                    }
+                    let mut v_sum = 0f64;
+                    for c in 0..c_val.len() {
+                        v_sum += v[c_val[c] as usize];
+                    }
+                    let p = v_prime_sum / v_sum;
+                    //println!("v: {}, v_prime: {}, p_new: {:.3}", v_sum, v_prime_sum, p);
+                    if p > 0.0 {
                         let to_vertex = match hashmap_states {
                             None => {
                                 format!(
@@ -696,12 +967,8 @@ impl TeamMDP {
                 }
             }
         }
-        graph
     }
-
-    pub fn statistics(&self) -> (usize,usize) {
-        (self.states.len(), self.transitions.len())
-    }
+    graph
 }
 
 pub fn vector_index_mapping<'a>(states: &'a [TeamState], transitions: &'a [TeamTransition], num_agents: &usize, num_tasks: &usize)
@@ -758,6 +1025,45 @@ pub fn vector_index_mapping<'a>(states: &'a [TeamState], transitions: &'a [TeamT
     }
     (state_index_map, transitions_map, state_to_trans_cardinality, state_to_trans_start_fin_map,
      task_agent_map, sprime_state_index_map, task_agent_sprime_map)
+}
+
+pub fn vector_index_mapping_non_iter<'a>(states: &'a [TeamState], transitions: &'a [TeamTransition], num_agents: &usize, num_tasks: &usize)
+                                -> (Vec<usize>, Vec<usize>, Vec<(usize, usize)>, Vec<usize>) {
+    // The transition map is a mapping from the state from the state_index_map to the associated transitions
+    let mut transitions_map: Vec<usize> = Vec::with_capacity(transitions.len());
+    // State to trans cardinality is a mapping of the number of transitions associated with state_index_map states
+    let mut state_to_trans_cardinality: Vec<usize> = Vec::with_capacity(states.len());
+    // State to trans start fin map, is the start and end point of transitions in transitions map
+    // using the state_index_map ordering
+    let mut state_to_trans_start_fin_map: Vec<(usize, usize)> = Vec::with_capacity(states.len());
+    let mut trans_start_counter: usize = 0;
+    let mut trans_fin_counter: usize = 0;
+    // count the number of sprimes per transition
+    let mut sprime_count: usize = 0;
+    for t in transitions.iter() {
+        sprime_count += t.to.len();
+    }
+    let mut sprime_index_counter: usize = 0;
+    let mut sprime_state_index_map: Vec<usize> = vec![0; sprime_count];
+    //
+    for s in states.iter() {
+        for t in transitions.iter().filter(|x| x.from == *s) {
+            let t_index: usize = transitions.iter().position(|x| x == t).unwrap();
+            transitions_map.push(t_index);
+            for sprime in t.to.iter() {
+                let sprime_state_index = states.iter().position(|x| *x == sprime.state).unwrap();
+                sprime_state_index_map[sprime_index_counter] = sprime_state_index;
+                sprime_index_counter += 1;
+            }
+        }
+        let trans_count = transitions.iter().filter(|x| x.from == *s).count();
+        state_to_trans_cardinality.push(trans_count);
+        trans_fin_counter = trans_start_counter + trans_count;
+        state_to_trans_start_fin_map.push((trans_start_counter, trans_fin_counter));
+        trans_start_counter = trans_fin_counter;
+    }
+    //
+    (transitions_map, state_to_trans_cardinality, state_to_trans_start_fin_map, sprime_state_index_map)
 }
 
 pub fn dfs_sched_debugger<'a>(mu: &'a HashMap<&'a TeamState, String>, states: &'a [TeamState], transitions: &'a [TeamTransition], initial: &'a TeamState) -> Vec<(&'a TeamState, &'a String)> {
@@ -912,6 +1218,132 @@ pub fn opt_exp_tot_cost<'a>(w: &[f64], eps: &f64, states: &'a [TeamState], trans
                 //println!("epsilon: {:?}", epsilon);
             }
             task_agent_counter += 1;
+        }
+    }
+
+    for agent in 0..*num_agents {
+        r[agent] = y_agent_cost_vector[agent * states.len() + *init_index];
+    }
+
+    for task in 0..*num_tasks {
+        r[task + *num_agents] = y_task_cost_vector[task * states.len() + *init_index];
+    }
+    //println!("new r: {:?}", r);
+    Some((mu, r))
+}
+
+pub fn opt_exp_tot_cost_non_iter<'a>(w: &[f64], eps: &f64, states: &'a [TeamState], transitions: &'a [TeamTransition],
+                            rewards: &Rewards, num_agents: &usize, num_tasks: &usize,
+                            transition_map: &'a [usize], state_transition_cardinality: &'a [usize],
+                            state_to_trans_st_fin_map: &'a [(usize,usize)], sprime_state_index_map: &'a [usize], init_index: &'a usize)
+                            -> Option<(Vec<String>, Vec<f64>)> {
+    let mut mu: Vec<String> = vec!["".to_string(); states.len()];
+    // inserting into a hashmap might slow things down a lot, should check this
+    let mut r: Vec<f64> = vec![0.0; w.len()];
+    let weight = arr1(w);
+
+    let mut x_cost_vectors: Vec<f64> = vec![0f64; states.len()];
+    let mut y_cost_vectors: Vec<f64> = vec![0f64; states.len()];
+    // There is another optimisation here where we can flatten these 2d ndarray to 1d vector which will be faster
+    // but this won't be a huge optimisation because ndarray is meant for these operations
+    let mut x_agent_cost_vector: Vec<f64> = vec![0.0; states.len() * *num_agents];
+    let mut y_agent_cost_vector: Vec<f64> = vec![0.0; states.len() * *num_agents];
+
+    let mut x_task_cost_vector: Vec<f64> = vec![0.0; states.len() * *num_tasks];
+    let mut y_task_cost_vector: Vec<f64> = vec![0.0; states.len() * *num_tasks];
+
+    let mut epsilon: f64 = 1.0;
+    while epsilon > *eps {
+        let mut sprime_counter = 0;
+        for (state_counter, _s) in states.iter().enumerate() {
+            let (t_s, t_f) = state_to_trans_st_fin_map[state_counter];
+            let num_state_transitions: usize = state_transition_cardinality[state_counter];
+            // absolutely limit the number of vector resizes
+            let mut min_action_values: Vec<(String, f64)> = Vec::with_capacity(num_state_transitions);
+            for t in t_s..t_f {
+                let transition = &transitions[transition_map[t]];
+                let transition_rewards = arr1(&transition.reward);
+                let scaled_weight_rewards = weight.dot(&transition_rewards);
+                let mut sum_vect: Vec<f64> = vec![0.0; transition.to.len()];
+                for (z, sprime) in transition.to.iter().enumerate(){
+                    let xbar_index: usize = sprime_state_index_map[sprime_counter];
+                    sum_vect[z] = sprime.p * x_cost_vectors[xbar_index];
+                    sprime_counter += 1;
+                }
+                let sum_vect_sum: f64 = sum_vect.iter().fold(0f64, |sum, &val| sum + val);
+                let mut action_reward = scaled_weight_rewards + sum_vect_sum;
+                min_action_values.push((transition.a.to_string(), action_reward));
+            }
+            min_action_values.sort_by(|(a1, a2), (b1, b2)| a2.partial_cmp(b2).unwrap());
+            //println!("min a: {:?}", min_action_values);
+            let mut minmax_pair: &(String, f64) = match rewards {
+                Rewards::NEGATIVE => &min_action_values.last().unwrap(),
+                Rewards::POSITIVE => &min_action_values[0]
+            };
+            let mut minmax_val: f64 = minmax_pair.1;
+            let mut arg_minmax = &minmax_pair.0;
+
+            y_cost_vectors[state_counter] = minmax_val;
+            mu[state_counter] = arg_minmax.to_string();
+        }
+        let mut y_bar_diff = opt_absolute_diff_vect(&x_cost_vectors, &y_cost_vectors).to_vec();
+        y_bar_diff.sort_by(|a,b| a.partial_cmp(b).unwrap());
+        //y_bar_diff_max_vect.sort();
+        epsilon = *y_bar_diff.last().unwrap();
+        x_cost_vectors = y_cost_vectors.to_vec();
+    }
+    epsilon = 1.0;
+    while epsilon > *eps {
+        let mut sprime_counter = 0;
+        for (state_counter, _s) in states.iter().enumerate() {
+            let chosen_action: &String = &mu[state_counter];
+            let (t_s, t_f) = state_to_trans_st_fin_map[state_counter];
+            for t in t_s..t_f {
+                let transition = &transitions[transition_map[t]];
+                if transition.a == *chosen_action {
+                    let mut sum_vect_agent: Vec<f64> = vec![0.0; *num_agents * transition.to.len()]; //vec![vec![0.0; transition.to.len()]; *num_agents];
+                    let mut sum_vect_task: Vec<f64> = vec![0.0; *num_tasks * transition.to.len()]; //vec![vec![0.0; transition.to.len()]; *num_tasks];
+                    for (l, sprime) in transition.to.iter().enumerate(){
+                        let xbar_index: usize = sprime_state_index_map[sprime_counter];
+                        for agent in 0..*num_agents {
+                            sum_vect_agent[agent * transition.to.len() + l] = sprime.p * x_agent_cost_vector[agent * states.len() + xbar_index];
+                        }
+                        for task in 0..*num_tasks {
+                            sum_vect_task[task * transition.to.len() + l] = sprime.p * x_task_cost_vector[task * states.len() + xbar_index];
+                        }
+                        sprime_counter += 1;
+                    }
+                    for agent in 0..*num_agents {
+                        let start: usize = agent * transition.to.len();
+                        let end: usize = start + transition.to.len();
+                        let p_trans_agent: f64 = sum_vect_agent[start..end].iter().sum();
+                        y_agent_cost_vector[agent * states.len() + state_counter] = transition.reward[agent] + p_trans_agent;
+                    }
+                    for task in 0..*num_tasks {
+                        let start: usize = task * transition.to.len();
+                        let end: usize = start + transition.to.len();
+                        let p_trans_agent: f64 = sum_vect_task[start..end].iter().sum();
+                        y_task_cost_vector[task * states.len() + state_counter] = transition.reward[*num_agents + task] + p_trans_agent;
+                    }
+                } else {
+                    for _sprime in transition.to.iter() {
+                        sprime_counter += 1;
+                    }
+                }
+            }
+        }
+        let mut diff_task = opt_absolute_diff_vect(&x_task_cost_vector[..], &y_task_cost_vector[..]).to_vec();
+        diff_task.sort_by(|a,b| a.partial_cmp(b).unwrap());
+        let max_task_val = diff_task.last().unwrap();
+        let mut diff_agent = opt_absolute_diff_vect(&x_agent_cost_vector[..], &y_agent_cost_vector[..]).to_vec();
+        diff_agent.sort_by(|a,b| a.partial_cmp(b).unwrap());
+        let max_agent_val = diff_task.last().unwrap();
+        x_agent_cost_vector = y_agent_cost_vector.to_vec();
+        x_task_cost_vector = y_task_cost_vector.to_vec();
+        if max_task_val > max_agent_val {
+            epsilon = *max_task_val;
+        } else {
+            epsilon = *max_agent_val;
         }
     }
 

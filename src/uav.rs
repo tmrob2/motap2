@@ -4,6 +4,8 @@ use std::fs::File;
 use std::io::Write;
 use petgraph::{dot::Dot};
 use std::time::{Duration, Instant};
+use csv::{Writer, WriterBuilder};
+use serde::Serialize;
 
 use model_checking::helper_methods::{power_set, construct_labelling_vect};
 use model_checking::mdp2::*;
@@ -162,7 +164,7 @@ fn main() {
     let h2: HashSet<&str> = HashSet::from_iter(vec!["s4","r"].iter().cloned());
     let s8_words: Vec<HashSet<&str>> = vec![h1,h2];
     let mut transition_map9: HashMap<(u32, u32), Vec<&HashSet<&str>>> = HashMap::new();
-    let mut transition_map9 = construct_dfa_transition(&ps[..], Some(&s7_words[..]), 0, 1, None, &mut transition_map9, None, None);
+    let mut transition_map9 = construct_dfa_transition(&ps[..], Some(&s8_words[..]), 0, 1, None, &mut transition_map9, None, None);
     let mut transition_map9 = construct_dfa_transition(&ps[..], None, 1, 3, Some((Some("h"), 2)), &mut transition_map9, None, None);
     let mut not_words = transition_map9.get(&(1,3)).unwrap().clone();
     let mut transition_map9 = construct_dfa_transition(&ps[..], None, 1, 2, Some((Some("down1"), 2)), &mut transition_map9, Some(&not_words[..]), None);
@@ -181,8 +183,10 @@ fn main() {
     let grid_state_space: HashMap<usize,(usize,usize)> = create_grid(grid_dim);
     let c_loc: (usize,usize) = (0,0);
     let c_loc2: (usize,usize) = (0,0);
+    let c_loc3: (usize,usize) = (20,10);
     let act1: Vec<&str> = vec!["x", "l", "r"];
-    let act2: Vec<&str> = vec!["n", "ne", "nw", "s", "se", "sw", "e", "w"];
+    //let act2: Vec<&str> = vec!["n", "ne", "nw", "s", "se", "sw", "e", "w"];
+    let act2: Vec<&str> = vec!["n", "s", "e", "w"];
     let v = vec![vec![], vec!["h"], vec!["r"], vec!["l"], vec!["h", "r"], vec!["h", "l"], vec!["start1"],
                  vec!["f1"], vec!["start2"], vec!["f2"], vec!["s1"], vec!["down1"], vec!["start1", "h"],
                  vec!["f1", "h"], vec!["start2", "h"], vec!["f2", "h"], vec!["s1", "h"], vec!["down1", "h"], vec!["start3"],
@@ -360,6 +364,11 @@ fn main() {
     }, MDP2{
         states: mdp_states.to_vec(),
         initial: *mdp_state_coords.get(&MDPLongState{ m: "x", g: c_loc2 }).unwrap(),
+        transitions: transitions.to_vec(),
+        labelling: labelling.to_vec()
+    },MDP2{
+        states: mdp_states.to_vec(),
+        initial: *mdp_state_coords.get(&MDPLongState{ m: "x", g: c_loc3 }).unwrap(),
         transitions: transitions.to_vec(),
         labelling: labelling.to_vec()
     }];
@@ -735,7 +744,7 @@ fn main() {
                              &mut mod_l_m2_dfa7, &mut additional_states27, &mut additional_transitions27, &mut additional_labels27);
     let product_mdp27 = ProductMDP2 {
         states: reach27.to_owned(),
-        initial: initial_prod_state17,
+        initial: initial_prod_state27,
         transitions: trans27,
         labelling: labels27
     };
@@ -757,11 +766,11 @@ fn main() {
                              &mut mod_l_m2_dfa8, &mut additional_states28, &mut additional_transitions28, &mut additional_labels28);
     let product_mdp28 = ProductMDP2 {
         states: reach28.to_owned(),
-        initial: initial_prod_state18,
+        initial: initial_prod_state28,
         transitions: trans28,
         labelling: labels28
     };
-    // local product: agent 1 task 9
+    // local product: agent 2 task 9
     let mut r_p_m2_dfa9: Vec<&DFA2ModelCheckingPair> = Vec::with_capacity(mdps[1].states.len() * dfa_sensor4.states.len());
     let mut t_m2_dfa9: Vec<DFA2ProductTransition> = Vec::new();
     let mut l_m2_dfa9: Vec<DFA2ProductLabellingPair> = Vec::new();
@@ -783,8 +792,215 @@ fn main() {
         transitions: trans29,
         labelling: labels29
     };
+    // agent 3
+    let mut r_p_m3_dfa1: Vec<&DFA2ModelCheckingPair> = Vec::with_capacity(mdps[2].states.len() * dfa_sensor.states.len());
+    let mut t_m3_dfa1: Vec<DFA2ProductTransition> = Vec::new();
+    let mut l_m3_dfa1: Vec<DFA2ProductLabellingPair> = Vec::new();
+    let mut mod_l_m3_dfa1: Vec<DFA2ModLabelPair> = Vec::new();
+    let mut additional_states31: HashSet<DFA2ModelCheckingPair> = HashSet::new();
+    let mut additional_transitions31: Vec<DFA2ProductTransition> = Vec::new();
+    let mut additional_labels31: Vec<NonRefDFA2ProductLabellingPair> = Vec::new();
+    let mdp_prod_states31 = create_states(&mdps[2].states[..], &dfa_sensor.states[..]);
+    let initial_prod_state31 = DFA2ModelCheckingPair { s: mdps[2].initial, q: dfa_sensor.initial };
 
-    let mut num_agents: usize = 2;
+
+    let (mut reach31, mut trans31, mut labels31) =
+        create_local_product(&mdps[1], &dfa_sensor, initial_label, failure_label, success_label,
+                             &completion_label_hash, &mdp_prod_states31[..],
+                             &initial_prod_state31,& mut r_p_m3_dfa1, &mut t_m3_dfa1, &mut l_m3_dfa1,
+                             &mut mod_l_m3_dfa1, &mut additional_states31, &mut additional_transitions31, &mut additional_labels31);
+    let product_mdp31 = ProductMDP2 {
+        states: reach31.to_owned(),
+        initial: initial_prod_state31,
+        transitions: trans31,
+        labelling: labels31
+    };
+    // local product 5,: agent 3, task 2
+    let mut r_p_m3_dfa2: Vec<&DFA2ModelCheckingPair> = Vec::with_capacity(mdps[1].states.len() * dfa_convoy1.states.len());
+    let mut t_m3_dfa2: Vec<DFA2ProductTransition> = Vec::new();
+    let mut l_m3_dfa2: Vec<DFA2ProductLabellingPair> = Vec::new();
+    let mut mod_l_m3_dfa2: Vec<DFA2ModLabelPair> = Vec::new();
+    let mut additional_states32: HashSet<DFA2ModelCheckingPair> = HashSet::new();
+    let mut additional_transitions32: Vec<DFA2ProductTransition> = Vec::new();
+    let mut additional_labels32: Vec<NonRefDFA2ProductLabellingPair> = Vec::new();
+    let mdp_prod_states32 = create_states(&mdps[2].states[..], &dfa_convoy1.states[..]);
+    let initial_prod_state32 = DFA2ModelCheckingPair { s: mdps[2].initial, q: dfa_convoy1.initial };
+
+
+    let (mut reach32, mut trans32, mut labels32) =
+        create_local_product(&mdps[2], &dfa_convoy1, initial_label, failure_label, success_label,
+                             &completion_label_hash, &mdp_prod_states32[..],
+                             &initial_prod_state32,& mut r_p_m3_dfa2, &mut t_m3_dfa2, &mut l_m3_dfa2,
+                             &mut mod_l_m3_dfa2, &mut additional_states32, &mut additional_transitions32,
+                             &mut additional_labels32);
+    let product_mdp32 = ProductMDP2 {
+        states: reach32.to_owned(),
+        initial: initial_prod_state32,
+        transitions: trans32,
+        labelling: labels32
+    };
+    // local product 6,: agent 3, task 3
+    let mut r_p_m3_dfa3: Vec<&DFA2ModelCheckingPair> = Vec::with_capacity(mdps[2].states.len() * dfa_convoy2.states.len());
+    let mut t_m3_dfa3: Vec<DFA2ProductTransition> = Vec::new();
+    let mut l_m3_dfa3: Vec<DFA2ProductLabellingPair> = Vec::new();
+    let mut mod_l_m3_dfa3: Vec<DFA2ModLabelPair> = Vec::new();
+    let mut additional_states33: HashSet<DFA2ModelCheckingPair> = HashSet::new();
+    let mut additional_transitions33: Vec<DFA2ProductTransition> = Vec::new();
+    let mut additional_labels33: Vec<NonRefDFA2ProductLabellingPair> = Vec::new();
+    let mdp_prod_states33 = create_states(&mdps[2].states[..], &dfa_convoy2.states[..]);
+    let initial_prod_state33 = DFA2ModelCheckingPair { s: mdps[2].initial, q: dfa_convoy2.initial };
+
+
+    let (mut reach33, mut trans33, mut labels33) =
+        create_local_product(&mdps[2], &dfa_convoy2, initial_label, failure_label, success_label,
+                             &completion_label_hash, &mdp_prod_states33[..],
+                             &initial_prod_state33,& mut r_p_m3_dfa3, &mut t_m3_dfa3, &mut l_m3_dfa3,
+                             &mut mod_l_m3_dfa3, &mut additional_states33, &mut additional_transitions33,
+                             &mut additional_labels33);
+    let product_mdp33 = ProductMDP2 {
+        states: reach33.to_owned(),
+        initial: initial_prod_state33,
+        transitions: trans33,
+        labelling: labels33
+    };
+    // local product 3: agent 3, task 4
+    let mut r_p_m3_dfa4: Vec<&DFA2ModelCheckingPair> = Vec::with_capacity(mdps[2].states.len() * dfa_convoy3.states.len());
+    let mut t_m3_dfa4: Vec<DFA2ProductTransition> = Vec::new();
+    let mut l_m3_dfa4: Vec<DFA2ProductLabellingPair> = Vec::new();
+    let mut mod_l_m3_dfa4: Vec<DFA2ModLabelPair> = Vec::new();
+    let mut additional_states34: HashSet<DFA2ModelCheckingPair> = HashSet::new();
+    let mut additional_transitions34: Vec<DFA2ProductTransition> = Vec::new();
+    let mut additional_labels34: Vec<NonRefDFA2ProductLabellingPair> = Vec::new();
+    let mdp_prod_states34 = create_states(&mdps[2].states[..], &dfa_convoy3.states[..]);
+    let initial_prod_state34 = DFA2ModelCheckingPair { s: mdps[2].initial, q: dfa_convoy3.initial };
+
+
+    let (mut reach34, mut trans34, mut labels34) =
+        create_local_product(&mdps[2], &dfa_convoy3, initial_label, failure_label, success_label,
+                             &completion_label_hash, &mdp_prod_states34[..],
+                             &initial_prod_state34,& mut r_p_m3_dfa4, &mut t_m3_dfa4, &mut l_m3_dfa4,
+                             &mut mod_l_m3_dfa4, &mut additional_states34, &mut additional_transitions34, &mut additional_labels34);
+    let product_mdp34 = ProductMDP2 {
+        states: reach34.to_owned(),
+        initial: initial_prod_state34,
+        transitions: trans34,
+        labelling: labels34
+    };
+    // local product 3: agent 3, task 5
+    let mut r_p_m3_dfa5: Vec<&DFA2ModelCheckingPair> = Vec::with_capacity(mdps[2].states.len() * dfa_convoy4.states.len());
+    let mut t_m3_dfa5: Vec<DFA2ProductTransition> = Vec::new();
+    let mut l_m3_dfa5: Vec<DFA2ProductLabellingPair> = Vec::new();
+    let mut mod_l_m3_dfa5: Vec<DFA2ModLabelPair> = Vec::new();
+    let mut additional_states35: HashSet<DFA2ModelCheckingPair> = HashSet::new();
+    let mut additional_transitions35: Vec<DFA2ProductTransition> = Vec::new();
+    let mut additional_labels35: Vec<NonRefDFA2ProductLabellingPair> = Vec::new();
+    let mdp_prod_states35 = create_states(&mdps[2].states[..], &dfa_convoy4.states[..]);
+    let initial_prod_state35 = DFA2ModelCheckingPair { s: mdps[2].initial, q: dfa_convoy4.initial };
+
+
+    let (mut reach35, mut trans35, mut labels35) =
+        create_local_product(&mdps[2], &dfa_convoy4, initial_label, failure_label, success_label,
+                             &completion_label_hash, &mdp_prod_states35[..],
+                             &initial_prod_state35,& mut r_p_m3_dfa5, &mut t_m3_dfa5, &mut l_m3_dfa5,
+                             &mut mod_l_m3_dfa5, &mut additional_states35, &mut additional_transitions35, &mut additional_labels35);
+    let product_mdp35 = ProductMDP2 {
+        states: reach35.to_owned(),
+        initial: initial_prod_state35,
+        transitions: trans35,
+        labelling: labels35
+    };
+    // local product 3: agent 3, task 6
+    let mut r_p_m3_dfa6: Vec<&DFA2ModelCheckingPair> = Vec::with_capacity(mdps[2].states.len() * dfa_convoy5.states.len());
+    let mut t_m3_dfa6: Vec<DFA2ProductTransition> = Vec::new();
+    let mut l_m3_dfa6: Vec<DFA2ProductLabellingPair> = Vec::new();
+    let mut mod_l_m3_dfa6: Vec<DFA2ModLabelPair> = Vec::new();
+    let mut additional_states36: HashSet<DFA2ModelCheckingPair> = HashSet::new();
+    let mut additional_transitions36: Vec<DFA2ProductTransition> = Vec::new();
+    let mut additional_labels36: Vec<NonRefDFA2ProductLabellingPair> = Vec::new();
+    let mdp_prod_states36 = create_states(&mdps[2].states[..], &dfa_convoy5.states[..]);
+    let initial_prod_state36 = DFA2ModelCheckingPair { s: mdps[2].initial, q: dfa_convoy5.initial };
+
+
+    let (mut reach36, mut trans36, mut labels36) =
+        create_local_product(&mdps[2], &dfa_convoy5, initial_label, failure_label, success_label,
+                             &completion_label_hash, &mdp_prod_states36[..],
+                             &initial_prod_state36,& mut r_p_m3_dfa6, &mut t_m3_dfa6, &mut l_m3_dfa6,
+                             &mut mod_l_m3_dfa6, &mut additional_states36, &mut additional_transitions36, &mut additional_labels36);
+    let product_mdp36 = ProductMDP2 {
+        states: reach36.to_owned(),
+        initial: initial_prod_state36,
+        transitions: trans36,
+        labelling: labels36
+    };
+    // local product: agent 3 task 7
+    let mut r_p_m3_dfa7: Vec<&DFA2ModelCheckingPair> = Vec::with_capacity(mdps[2].states.len() * dfa_sensor2.states.len());
+    let mut t_m3_dfa7: Vec<DFA2ProductTransition> = Vec::new();
+    let mut l_m3_dfa7: Vec<DFA2ProductLabellingPair> = Vec::new();
+    let mut mod_l_m3_dfa7: Vec<DFA2ModLabelPair> = Vec::new();
+    let mut additional_states37: HashSet<DFA2ModelCheckingPair> = HashSet::new();
+    let mut additional_transitions37: Vec<DFA2ProductTransition> = Vec::new();
+    let mut additional_labels37: Vec<NonRefDFA2ProductLabellingPair> = Vec::new();
+    let mdp_prod_states37 = create_states(&mdps[2].states[..], &dfa_sensor2.states[..]);
+    let initial_prod_state37 = DFA2ModelCheckingPair { s: mdps[2].initial, q: dfa_sensor2.initial };
+
+    let (mut reach37, mut trans37, mut labels37) =
+        create_local_product(&mdps[2], &dfa_sensor2, initial_label, failure_label, success_label,
+                             &completion_label_hash, &mdp_prod_states37[..],
+                             &initial_prod_state37,& mut r_p_m3_dfa7, &mut t_m3_dfa7, &mut l_m3_dfa7,
+                             &mut mod_l_m3_dfa7, &mut additional_states37, &mut additional_transitions37, &mut additional_labels37);
+    let product_mdp37 = ProductMDP2 {
+        states: reach37.to_owned(),
+        initial: initial_prod_state37,
+        transitions: trans37,
+        labelling: labels37
+    };
+    // local product: agent 1 task 8
+    let mut r_p_m3_dfa8: Vec<&DFA2ModelCheckingPair> = Vec::with_capacity(mdps[2].states.len() * dfa_sensor3.states.len());
+    let mut t_m3_dfa8: Vec<DFA2ProductTransition> = Vec::new();
+    let mut l_m3_dfa8: Vec<DFA2ProductLabellingPair> = Vec::new();
+    let mut mod_l_m3_dfa8: Vec<DFA2ModLabelPair> = Vec::new();
+    let mut additional_states38: HashSet<DFA2ModelCheckingPair> = HashSet::new();
+    let mut additional_transitions38: Vec<DFA2ProductTransition> = Vec::new();
+    let mut additional_labels38: Vec<NonRefDFA2ProductLabellingPair> = Vec::new();
+    let mdp_prod_states38 = create_states(&mdps[2].states[..], &dfa_sensor3.states[..]);
+    let initial_prod_state38 = DFA2ModelCheckingPair { s: mdps[2].initial, q: dfa_sensor3.initial };
+
+    let (mut reach38, mut trans38, mut labels38) =
+        create_local_product(&mdps[2], &dfa_sensor3, initial_label, failure_label, success_label,
+                             &completion_label_hash, &mdp_prod_states38[..],
+                             &initial_prod_state38,& mut r_p_m3_dfa8, &mut t_m3_dfa8, &mut l_m3_dfa8,
+                             &mut mod_l_m3_dfa8, &mut additional_states38, &mut additional_transitions38, &mut additional_labels38);
+    let product_mdp38 = ProductMDP2 {
+        states: reach38.to_owned(),
+        initial: initial_prod_state38,
+        transitions: trans38,
+        labelling: labels38
+    };
+    // local product: agent 3 task 9
+    let mut r_p_m3_dfa9: Vec<&DFA2ModelCheckingPair> = Vec::with_capacity(mdps[2].states.len() * dfa_sensor4.states.len());
+    let mut t_m3_dfa9: Vec<DFA2ProductTransition> = Vec::new();
+    let mut l_m3_dfa9: Vec<DFA2ProductLabellingPair> = Vec::new();
+    let mut mod_l_m3_dfa9: Vec<DFA2ModLabelPair> = Vec::new();
+    let mut additional_states39: HashSet<DFA2ModelCheckingPair> = HashSet::new();
+    let mut additional_transitions39: Vec<DFA2ProductTransition> = Vec::new();
+    let mut additional_labels39: Vec<NonRefDFA2ProductLabellingPair> = Vec::new();
+    let mdp_prod_states39 = create_states(&mdps[2].states[..], &dfa_sensor4.states[..]);
+    let initial_prod_state39 = DFA2ModelCheckingPair { s: mdps[2].initial, q: dfa_sensor4.initial };
+
+    let (mut reach39, mut trans39, mut labels39) =
+        create_local_product(&mdps[2], &dfa_sensor4, initial_label, failure_label, success_label,
+                             &completion_label_hash, &mdp_prod_states39[..],
+                             &initial_prod_state39,& mut r_p_m3_dfa9, &mut t_m3_dfa9, &mut l_m3_dfa9,
+                             &mut mod_l_m3_dfa9, &mut additional_states39, &mut additional_transitions39, &mut additional_labels39);
+    let product_mdp39 = ProductMDP2 {
+        states: reach39.to_owned(),
+        initial: initial_prod_state39,
+        transitions: trans39,
+        labelling: labels39
+    };
+    
+    
+    let mut num_agents: usize = 3;
     let mut num_tasks: usize = 9;
     let mut team_input: Vec<TeamInput> = Vec::with_capacity(num_tasks * num_agents);
     team_input.push(TeamInput {
@@ -913,6 +1129,69 @@ fn main() {
         dead: &dfa_sensor4.dead,
         acc: &dfa_sensor4.acc
     });
+    team_input.push(TeamInput {
+        agent: 2,
+        task: 0,
+        product: product_mdp31,
+        dead: &dfa_sensor.dead,
+        acc: &dfa_sensor.acc
+    });
+    team_input.push(TeamInput {
+        agent: 2,
+        task: 1,
+        product: product_mdp32,
+        dead: &dfa_convoy1.dead,
+        acc: &dfa_convoy1.acc
+    });
+    team_input.push(TeamInput {
+        agent: 2,
+        task: 2,
+        product: product_mdp33,
+        dead: &dfa_convoy2.dead,
+        acc: &dfa_convoy2.acc
+    });
+    team_input.push(TeamInput {
+        agent: 2,
+        task: 3,
+        product: product_mdp34,
+        dead: &dfa_convoy3.dead,
+        acc: &dfa_convoy3.acc
+    });
+    team_input.push(TeamInput {
+        agent: 2,
+        task: 4,
+        product: product_mdp35,
+        dead: &dfa_convoy3.dead,
+        acc: &dfa_convoy3.acc
+    });
+    team_input.push(TeamInput {
+        agent: 2,
+        task: 5,
+        product: product_mdp36,
+        dead: &dfa_convoy3.dead,
+        acc: &dfa_convoy3.acc
+    });
+    team_input.push(TeamInput {
+        agent: 2,
+        task: 6,
+        product: product_mdp37,
+        dead: &dfa_sensor2.dead,
+        acc: &dfa_sensor2.acc
+    });
+    team_input.push(TeamInput {
+        agent: 2,
+        task: 7,
+        product: product_mdp38,
+        dead: &dfa_sensor3.dead,
+        acc: &dfa_sensor3.acc
+    });
+    team_input.push(TeamInput {
+        agent: 2,
+        task: 8,
+        product: product_mdp39,
+        dead: &dfa_sensor4.dead,
+        acc: &dfa_sensor4.acc
+    });
     // ----------------------------
     // Create Team Structure
     // ----------------------------
@@ -932,14 +1211,21 @@ fn main() {
     // --------------------------------
     // Parameters
     // --------------------------------
-    let target: Vec<f64> = vec![-900.0, -900.0, 600.0, 800.0, 800.0, 800.0, 800.0, 800.0, 800.0, 800.0, 800.0];
-    let epsilon: f64 = 0.0001;
+    let target: Vec<f64> = vec![-400.0, -400.0, -400.0, 50.0, 50.0, 50.0, 50.0, 300.0, 300.0, 300.0, 300.0, 300.0];
+    let epsilon: f64 = 0.00001;
     let rewards: Rewards = Rewards::NEGATIVE;
     // ---------------------------------
     // Run
     // ---------------------------------
+    println!("Caching index map");
+    let (state_index_map, transition_map, state_to_trans_cardinality,
+        state_to_trans_start_fin_map, task_agent_map, sprime_state_index_map, task_agent_sprime_map)
+        = vector_index_mapping(&team_mdp.states[..],&team_mdp.transitions[..], &team_mdp.num_agents, &team_mdp.num_tasks);
+
     let start = Instant::now();
-    let output = team_mdp.multi_obj_sched_synth(&target, &epsilon, &rewards);
+    let output = team_mdp.multi_obj_sched_synth(&target, &epsilon, &rewards, &state_index_map, &transition_map, &state_to_trans_cardinality,
+                                                &state_to_trans_start_fin_map, &task_agent_map, &sprime_state_index_map, &task_agent_sprime_map);
+    //let output = team_mdp.multi_obj_sched_synth_non_iter(&target, &epsilon, &rewards);
     let duration = start.elapsed();
     println!("Model checking time: {:?}", duration);
     let (state_count, transition_count) = team_mdp.statistics();
@@ -961,14 +1247,34 @@ fn main() {
             }
         }
     }*/
+    let initial_index = team_mdp.states.iter().position(|x| *x == team_mdp.initial).unwrap();
+    for mu in output.mu.iter(){
+        println!("s: {:?}, a: {:?}", team_mdp.states[initial_index], mu[initial_index]);
+    }
+
+    for i in 0..output.v.len() {
+        if output.v[i] > 0.0 {
+            let actions = &output.mu[i];
+            let (v,_ord_v) = dfs_sched_debugger(&actions[..], &team_mdp.states[..], &team_mdp.transitions[..],
+                                                &team_mdp.initial, None);
+            for t in 0..team_mdp.num_tasks {
+                for agent in 0..team_mdp.num_agents {
+                    let v_t_a: Vec<_> = v.iter().
+                        filter(|(s, a)| s.task == t && s.agent == agent).
+                        map(|(s,a)| (*s, *a)).collect();
+                    write_to_csv(&v_t_a[..], &mdp_state_hashmap, t, agent, i);
+                }
+            }
+        }
+    }
     // ---------------------------------
     // DFS Output
     // ---------------------------------
-    let graph = TeamMDP::dfs_merging(&team_mdp.initial, &output.mu[..], &team_mdp.states[..], &output.v,
+    /*let graph = dfs_merging(&team_mdp.initial, &output.mu[..], &team_mdp.states[..], &output.v,
                                      &team_mdp.transitions[..], Some(&mdp_state_hashmap));
     let dot = format!("{}", Dot::new(&graph));
     let mut file = File::create("diagnostics/merged_sched.dot").unwrap();
-    file.write_all(&dot.as_bytes());
+    file.write_all(&dot.as_bytes());*/
 }
 
 /// hazard states are not the grid locations of hazards but the corresponding internal agent states
@@ -1071,7 +1377,7 @@ fn create_mdp_transitions<'a>(states: &'a [u32], state_hash: &'a HashMap<u32, MD
                 } else {
                     transition.rewards = 3.0;
                 }
-            } else if *a == "ne" {
+            }/* else if *a == "ne" {
                 let sprime = s_prime_movement(long_state, &movement, movement_p, &MovementDirection::NE, &state_coords);
                 transition.s_prime = sprime;
                 if long_state.m == "x" {
@@ -1087,7 +1393,7 @@ fn create_mdp_transitions<'a>(states: &'a [u32], state_hash: &'a HashMap<u32, MD
                 } else {
                     transition.rewards = 3.0;
                 }
-            } else if *a == "s" {
+            } */ else if *a == "s" {
                 let sprime = s_prime_movement(long_state, &movement, movement_p, &MovementDirection::SOUTH, &state_coords);
                 transition.s_prime = sprime;
                 if long_state.m == "x" {
@@ -1095,7 +1401,7 @@ fn create_mdp_transitions<'a>(states: &'a [u32], state_hash: &'a HashMap<u32, MD
                 } else {
                     transition.rewards = 3.0;
                 }
-            } else if *a == "se" {
+            } /*else if *a == "se" {
                 let sprime = s_prime_movement(long_state, &movement, movement_p, &MovementDirection::SE, &state_coords);
                 transition.s_prime = sprime;
                 if long_state.m == "x" {
@@ -1111,7 +1417,7 @@ fn create_mdp_transitions<'a>(states: &'a [u32], state_hash: &'a HashMap<u32, MD
                 } else {
                     transition.rewards = 3.0;
                 }
-            } else if *a == "e" {
+            } */ else if *a == "e" {
                 let sprime = s_prime_movement(long_state, &movement, movement_p, &MovementDirection::EAST, &state_coords);
                 transition.s_prime = sprime;
                 if long_state.m == "x" {
@@ -1155,11 +1461,11 @@ fn movement_coords<'a>(state: &'a u32, state_hash: &'a HashMap<u32, MDPLongState
     let (x,y) = state_hash.get(state).unwrap().g;
     let movement = Movement {
         north: move_north(&x, &y, &grid_dim, obstacles),
-        north_east: move_north_east(&x,&y,&grid_dim,obstacles),
-        north_west: move_north_west(&x,&y,&grid_dim,obstacles),
+        //north_east: move_north_east(&x,&y,&grid_dim,obstacles),
+        //north_west: move_north_west(&x,&y,&grid_dim,obstacles),
         south: move_south(&x, &y, obstacles),
-        south_east: move_south_east(&x,&y,&grid_dim,obstacles),
-        south_west: move_south_west(&x,&y,obstacles),
+        //south_east: move_south_east(&x,&y,&grid_dim,obstacles),
+        //south_west: move_south_west(&x,&y,obstacles),
         east: move_east(&x, &y, &grid_dim, obstacles),
         west: move_west(&x, &y, obstacles)
     };
@@ -1319,7 +1625,7 @@ fn s_prime_movement<'a, 'b>(state: &'a MDPLongState<'a>, movements: &'a Movement
             }}
     ];
     sprime*/
-    match direction {
+    /*match direction {
         MovementDirection::NORTH => {
             vec![TransitionPair{
                 s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.north }).unwrap(),
@@ -1417,6 +1723,58 @@ fn s_prime_movement<'a, 'b>(state: &'a MDPLongState<'a>, movements: &'a Movement
             }]
         }
     }
+     */
+
+    match direction {
+        MovementDirection::NORTH => {
+            vec![TransitionPair{
+                s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.north }).unwrap(),
+                p: *p_dir,
+            },TransitionPair{
+                s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.east }).unwrap(),
+                p: (1f64-*p_dir)/2f64,
+            },TransitionPair{
+                s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.west }).unwrap(),
+                p: (1f64-*p_dir)/2f64,
+            }]
+        }
+        MovementDirection::SOUTH => {
+            vec![TransitionPair{
+                s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.south }).unwrap(),
+                p: *p_dir,
+            },TransitionPair{
+                s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.east }).unwrap(),
+                p: (1f64-*p_dir)/2f64,
+            },TransitionPair{
+                s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.west }).unwrap(),
+                p: (1f64-*p_dir)/2f64,
+            }]
+        }
+        MovementDirection::EAST => {
+            vec![TransitionPair{
+                s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.east }).unwrap(),
+                p: *p_dir,
+            },TransitionPair{
+                s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.north }).unwrap(),
+                p: (1f64-*p_dir)/2f64,
+            },TransitionPair{
+                s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.south }).unwrap(),
+                p: (1f64-*p_dir)/2f64,
+            }]
+        }
+        MovementDirection::WEST => {
+            vec![TransitionPair{
+                s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.west }).unwrap(),
+                p: *p_dir,
+            },TransitionPair{
+                s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.north }).unwrap(),
+                p: (1f64-*p_dir)/2f64,
+            },TransitionPair{
+                s: *state_coords.get(&MDPLongState{ m: state.m, g: movements.south }).unwrap(),
+                p: (1f64-*p_dir)/2f64,
+            }]
+        }
+    }
 }
 // ----------------------
 // Grid Definition
@@ -1434,11 +1792,11 @@ fn create_grid(grid: (usize,usize)) -> HashMap<usize,(usize,usize)> {
 
 enum MovementDirection {
     NORTH,
-    NE,
-    NW,
+    //NE,
+    //NW,
     SOUTH,
-    SE,
-    SW,
+    //SE,
+    //SW,
     EAST,
     WEST
 }
@@ -1446,11 +1804,44 @@ enum MovementDirection {
 #[derive(Debug, Clone)]
 struct Movement {
     north: (usize,usize),
-    north_east: (usize,usize),
-    north_west: (usize, usize),
+    //north_east: (usize,usize),
+    //north_west: (usize, usize),
     south: (usize,usize),
-    south_east: (usize,usize),
-    south_west: (usize,usize),
+    //south_east: (usize,usize),
+    //south_west: (usize,usize),
     east: (usize,usize),
     west: (usize,usize),
+}
+
+#[derive(Serialize)]
+struct Row {
+    x: String,
+    y: String,
+    values: String
+}
+
+fn write_to_csv(data: &[(&TeamState, &String)], mdp_states_hash: &HashMap<u32, MDPLongState>,
+                task: usize, agent: usize, v_num: usize) -> Result<(), Box<dyn std::error::Error>> {
+    let path: String = format!("/home/tmrob2/sched-output-task{}-agent{}-mu{}.csv", task, agent, v_num);
+
+    let mut wrt = WriterBuilder::new().has_headers(false).from_path(path)?;
+    for (state, a) in data.iter() {
+        let r: Option<(String,String)> = if state.state.s == 999 {
+            None
+        } else {
+            let mdp_coord = mdp_states_hash.get(&state.state.s).unwrap();
+            Some((mdp_coord.g.0.to_string(), mdp_coord.g.1.to_string()))
+        };
+        match r {
+            None => {}
+            Some((x,y)) => {
+                wrt.serialize(Row {
+                    x,
+                    y,
+                    values: a.to_string()
+                })?;
+            }
+        }
+    }
+    Ok(())
 }

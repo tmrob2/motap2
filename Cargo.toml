@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 rand = "0.7.3"
+csv = "1.1.5"
 itertools = "0.10.0"
 #permutohedron = "0.2.4"
 ndarray = "0.14.0"
@@ -39,6 +40,10 @@ path = "src/dfa_based.rs"
 [[bin]]
 name = "uav"
 path = "src/uav.rs"
+
+[[bin]]
+name = "scale"
+path = "src/scale.rs"
 
 [[bench]]
 name="benchmark"
