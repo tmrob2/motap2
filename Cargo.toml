@@ -25,21 +25,17 @@ clap = "2.*"
 #lazy_static = "1.4.0"
 regex = "1.5.4"
 
-[lib]
-name="lib"
-path="src/lib.rs"
-
 #[[bin]]
 #name = "long_run"
 #path = "src/long_run.model_checking"
 
 [[bin]]
-name = "dfa"
-path = "src/dfa_based.rs"
+name = "stapu"
+path = "src/stapu.rs"
 
 [[bin]]
-name = "uav"
-path = "src/uav.rs"
+name = "motap"
+path = "src/motap.rs"
 
 [[bin]]
 name = "scale"

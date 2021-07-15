@@ -1,351 +1,191 @@
-use petgraph::{Graph, graph::NodeIndex};
-use petgraph::algo::{has_path_connecting};
 use itertools::Itertools;
 use std::collections::{HashSet};
-use std::iter::{FromIterator};
-extern crate serde_json;
-use serde::Deserialize;
-use super::mdp;
+//use std::iter::{FromIterator};
+use super::mdp2;
+use mdp2::*;
 
-use mdp::*;
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct DFATransitions {
+#[derive(Debug, Clone)]
+pub struct DFATransitions<'a> {
     pub q: u32,
-    pub w: Vec<String>,
-    pub q_prime: u32,
+    pub w: Vec<&'a HashSet<&'a str>>,
+    pub q_prime: u32
 }
 
-#[derive(Debug, Deserialize)]
-pub struct DFA {
+#[derive(Debug)]
+pub struct DFA<'a> {
     pub states: Vec<u32>,
-    pub sigma: Vec<String>,
     pub initial: u32,
-    pub delta: Vec<DFATransitions>,
+    pub delta: Vec<DFATransitions<'a>>,
     pub acc: Vec<u32>,
-    pub dead: Vec<u32>
+    pub dead: Vec<u32>,
+    pub jacc: Vec<u32>
 }
 
-#[derive(Clone, Debug)]
-pub struct DFAProductMDP {
-    pub states: Vec<DFAModelCheckingPair>,
-    pub initial: DFAModelCheckingPair,
-    pub transitions: Vec<DFAProductTransition>,
-    pub labelling: Vec<DFAProductLabellingPair>,
+#[derive(Clone, Debug, Default)]
+pub struct DFAProductMDP<'a> {
+    pub states: Vec<DFAModelCheckingPair<'a>>,
+    pub initial: DFAModelCheckingPair<'a>,
+    pub transitions: Vec<DFAProductTransition<'a>>,
+    //pub labelling: Vec<DFAProductLabellingPair<'a>>,
 }
 
-impl DFAProductMDP {
-    pub fn create_states(&mut self, mdp: &MDP, dfa: &DFA) {
-        self.states = Vec::new();
-        let cp= mdp.states.clone().into_iter().
-            cartesian_product(dfa.states.clone().into_iter());
-        for (s_m, q_a) in cp.into_iter() {
-            self.states.push(DFAModelCheckingPair{ s: s_m, q: q_a});
-        }
-    }
-
-    pub fn create_labelling(&mut self, mdp: &MDP) {
-        for state in self.states.iter() {
-            for mdp_label in mdp.labelling.iter().filter(|x| x.s == state.s) {
-                self.labelling.push(DFAProductLabellingPair{
-                    sq: DFAModelCheckingPair { s: state.s, q: state.q },
-                    w: vec![mdp_label.w.to_string()]
-                });
-            }
-        }
-        /*for label in self.labelling.iter() {
-            println!("debug label: {:?}", label);
-        }*/
-    }
-
-    pub fn create_transitions(&mut self, mdp: &MDP, dfa: &DFA) {
-        for state in self.states.iter() {
-            for transition in mdp.transitions.iter()
-                .filter(|x| x.s == state.s) {
-                let mut t = DFAProductTransition {
-                    sq: DFAModelCheckingPair { s: state.s, q: state.q },
-                    a: transition.a.to_string(),
-                    sq_prime: vec![],
-                    reward: 0.0
-                };
-                t.reward = transition.rewards; // this is the reward inherited from the MDP
-                for sprime in transition.s_prime.iter() {
-                    for lab in mdp.labelling.iter()
-                        .filter(|l| l.s == sprime.s) {
-                        for q_prime in dfa.delta.iter()
-                            .filter(|q| q.q == state.q && q.w.iter().any(|xx| *xx == lab.w)) {
-                            t.sq_prime.push(DFATransitionPair {
-                                state: DFAModelCheckingPair {s: sprime.s, q: q_prime.q_prime},
-                                p: sprime.p
-                            })
-                        }
-                    }
-                }
-                self.transitions.push(t);
-            }
-        }
-    }
-
-    /// Prune does graph analysis to check if there is a path from an initial state to any other
-    /// state. If the has_path returns ```false``` then the state is removed from the graph and
-    /// subsequently the Product MDP (DFA).
-    pub fn prune_candidates(&mut self, reachable_state: &Vec<(DFAModelCheckingPair, bool)>) -> (Vec<usize>,Vec<DFAModelCheckingPair>){
-        let mut prune_state_indices: Vec<usize> = Vec::new();
-        let mut prune_states: Vec<DFAModelCheckingPair> = Vec::new();
-        for (state, _truth) in reachable_state.iter().
-            filter(|(_x,t)| !*t) {
-            let remove_index = self.states.iter().position(|y| y == state).unwrap();
-            prune_state_indices.push(remove_index);
-            prune_states.push(self.states[remove_index].clone())
-        }
-        // find the transitions relating to the prune states.
-        (prune_state_indices, prune_states)
-    }
-
-    pub fn prune_states_transitions(&mut self, prune_state_indices: &Vec<usize>, prune_states: &Vec<DFAModelCheckingPair>) {
-        let mut new_transitions: Vec<DFAProductTransition> = Vec::new();
-        let prune_state_hash: HashSet<_> = HashSet::from_iter(prune_states.iter().cloned());
-        for transition in self.transitions.iter().
-            filter(|x| prune_states.iter().all(|y| *y != x.sq) && {
-                let mut sq_prime: Vec<DFAModelCheckingPair> = vec![DFAModelCheckingPair{ s: 0, q: 0 }; x.sq_prime.len()];
-                for (i, xx) in x.sq_prime.iter().enumerate() {
-                    sq_prime[i] = xx.state.clone();
-                }
-                let sq_prime_hash: HashSet<DFAModelCheckingPair> = HashSet::from_iter(sq_prime.iter().cloned());
-                let intersection: HashSet<_> = prune_state_hash.intersection(&sq_prime_hash).collect();
-                intersection.is_empty()
-            }){
-            new_transitions.push(DFAProductTransition {
-                sq: DFAModelCheckingPair { s: transition.sq.s, q: transition.sq.q },
-                a: transition.a.to_string(),
-                sq_prime: transition.sq_prime.to_vec(),
-                reward: transition.reward
-            });
-        }
-
-        self.transitions = new_transitions;
-        let mut new_states: Vec<DFAModelCheckingPair> = Vec::new();
-        for (i, state) in self.states.iter().enumerate() {
-            let delete_truth = prune_state_indices.iter().any(|x| *x == i);
-            if !delete_truth {
-                new_states.push(DFAModelCheckingPair { s: state.s, q: state.q })
-            }
-        }
-        self.states = new_states;
-    }
-
-    pub fn reachable_from_initial(&self, g: &Graph<String, String>) -> Vec<(DFAModelCheckingPair, bool)> {
-        let initial: NodeIndex = g.node_indices().
-            find(|x| g[*x] == format!("({},{})", self.initial.s, self.initial.q)).unwrap();
-        let reachable: Vec<bool> = vec![true; self.states.len()];
-        let mut reachable_states: Vec<(DFAModelCheckingPair, bool)> = self.states.iter().cloned().
-            zip(reachable.into_iter()).collect();
-        for (state, truth) in reachable_states.iter_mut() {
-            let to_node_index: NodeIndex = g.node_indices().
-                find(|x| g[*x] == format!("({},{})", state.s, state.q)).unwrap();
-            *truth = has_path_connecting(g, initial, to_node_index, None);
-            //println!("Path from {} to {} is {}", g[initial], g[to_node_index], truth);
-        }
-        reachable_states
-    }
-
-    pub fn prune_graph(&self, g: &mut Graph<String, String>, prune_states: &Vec<usize>) {
-        for state in prune_states.iter() {
-            let delete = g.node_indices().
-                find(|x| g[*x] == format!("({},{})", self.states[*state].s, self.states[*state].q)).unwrap();
-            g.remove_node(delete);
-        }
-    }
-
-    pub fn generate_graph(&self) -> Graph<String, String> {
-        let mut graph: Graph<String, String> = Graph::new();
-
-        for state in self.states.iter() {
-            graph.add_node(format!("({},{})", state.s, state.q));
-        }
-        for transition in self.transitions.iter() {
-            let origin_index = graph.node_indices().
-                find(|x| graph[*x] == format!("({},{})", transition.sq.s, transition.sq.q)).unwrap();
-            for sq_prime in transition.sq_prime.iter() {
-                let destination_index = match graph.node_indices().
-                    find(|x| graph[*x] == format!("({},{})", sq_prime.state.s, sq_prime.state.q)){
-                    None => {
-                        println!("transition: {:?}", transition);
-                        panic!("state: ({},{:?}) not found!", sq_prime.state.s, sq_prime.state.q)
-                    }
-                    Some(x) => {x}
-                };
-                graph.add_edge(origin_index, destination_index, transition.a.to_string());
-            }
-        }
-        graph
-    }
-
-    pub fn modify_rewards(&mut self, dfa: &DFA) {
-        //println!("dfa acc: {:?}", dfa.acc);
-        //println!("dfa rej: {:?}", dfa.dead);
-        for transition in self.transitions.iter_mut().
-            filter(|x| dfa.acc.iter().any(|y| *y == x.sq.q && x.a != "tau")){
-            //println!("state: ({},{}) -> 0.0", transition.sq.s, transition.sq.q);
-            transition.reward = 0.0;
-        }
-    }
-
-    pub fn modify_complete(&mut self, dfa: &DFA) {
-        let mut transition_modifications: Vec<DFAProductTransition> = Vec::new();
-        let mut state_modifications: HashSet<DFAModelCheckingPair> = HashSet::new();
-        let mut label_modifications: HashSet<DFAProductLabellingPair> = HashSet::new();
-        for state in self.states.iter().
-            filter(|x| dfa.acc.iter().all(|y| *y != x.q)) {
-            for transition in self.transitions.iter_mut().
-                filter(|x| x.sq == *state &&
-                    x.sq_prime.iter().
-                        any(|xx| dfa.acc.iter().
-                            any(|yy| *yy == xx.state.q))) {
-                //println!("observed transitions for state: {:?}", transition);
-                for sq_prime in transition.sq_prime.iter_mut().
-                    filter(|x| dfa.acc.iter().any(|y| *y == x.state.q)){
-                    if transition_modifications.iter().all(|x| x.sq != DFAModelCheckingPair {
-                        s: 999,
-                        q: sq_prime.state.q
-                    } && *sq_prime != DFATransitionPair{ state: DFAModelCheckingPair { s: sq_prime.state.s, q: sq_prime.state.q }, p: 1.0 }) {
-                        transition_modifications.push(DFAProductTransition {
-                            sq: DFAModelCheckingPair { s: 999, q: sq_prime.state.q },
-                            a: "tau".to_string(),
-                            sq_prime: vec![DFATransitionPair{ state: DFAModelCheckingPair { s: sq_prime.state.s, q: sq_prime.state.q }, p: 1.0 }],
-                            reward: transition.reward
-                        });
-                    }
-
-                    sq_prime.state.s = 999; //  change the transition state to s*=999 coded
-                    state_modifications.insert(DFAModelCheckingPair {
-                        s: 999,
-                        q: sq_prime.state.q
-                    });
-                    // finally we need to modify the labels which go along with the additional
-                    // reward state
-                    label_modifications.insert(DFAProductLabellingPair {
-                        sq: DFAModelCheckingPair { s: 999, q: sq_prime.state.q },
-                        w: vec!["com".to_string()]
-                    });
-                }
-            }
-        }
-        for state_mod in state_modifications.into_iter() {
-            self.states.push(state_mod);
-        }
-        for transition in transition_modifications.into_iter() {
-            self.transitions.push(transition);
-        }
-        for label in label_modifications.into_iter() {
-            self.labelling.push(label);
-        }
-    }
-
-    pub fn edit_labelling(&mut self, dfa: &DFA, mdp: &MDP) {
-        // edit labelling
-        //println!("dfa accepting: {:?}", dfa.acc);
-        //println!("dfa rejecting: {:?}", dfa.dead);
-        for label in self.labelling.iter_mut() {
-            if label.sq == self.initial {
-                // this is an initial state
-                label.w.push("ini".to_string());
-                //println!("state {:?} has been identified as a initial state", label.sq);
-            } else if dfa.dead.iter().any(|x| *x == label.sq.q) && label.sq.s == mdp.initial {
-                // this is a rejected state
-                label.w.push("fai".to_string());
-                //println!("state {:?} has been identified as a rejecting state", label.sq);
-            } else if dfa.acc.iter().any(|x| *x == label.sq.q) && label.sq.s == mdp.initial {
-                // this is a successful state from which switch transitions are possible to
-                // hand over
-                //println!("state {:?} has been identified as an accepting state", label.sq);
-                label.w.push("suc".to_string());
-            }
-        }
-    }
-
-    /// Creates an empty Product MDP as a skeleton structure for filling in with various
-    /// implementation functions
-    pub fn default() -> DFAProductMDP {
+/*impl <'a>DFAProductMDP<'a> {
+    fn default() -> DFAProductMDP<'a> {
         DFAProductMDP {
             states: vec![],
-            initial: DFAModelCheckingPair { s: 0, q: 0 },
+            initial: Default::default(),
             transitions: vec![],
-            labelling: vec![]
+            //labelling: vec![]
         }
     }
+}*/
+
+/// To create the Local Product staets M x A, we require the cartesian product of all (s,q) from S x Q
+#[allow(dead_code)]
+pub fn create_states<'a>(sbar: &'a [u32], qbar: &'a [u32]) -> Vec<DFAModelCheckingPair<'a>> {
+    let mut prod_states: Vec<DFAModelCheckingPair> =
+        vec![DFAModelCheckingPair{ state: ProdState { s: 0, q: 0 }, w: vec![] }; sbar.len() * qbar.len()];
+    let cp = sbar.iter().cartesian_product(qbar.iter());
+    for (k,(s,q)) in cp.into_iter().enumerate() {
+        prod_states[k] = DFAModelCheckingPair{ state: ProdState {s: *s, q: *q}, w: vec![] }
+    }
+    prod_states
 }
 
-pub fn create_local_product<'a, 'b>(initial_state: &'b DFAModelCheckingPair, mdp: &'a MDP, dfa: &'a DFA) -> DFAProductMDP {
-    let mut local_product: DFAProductMDP = DFAProductMDP::default();
-    local_product.initial = *initial_state;
-    local_product.create_states(mdp, dfa);
-    local_product.create_transitions(mdp, dfa);
-    for t in local_product.transitions.iter() {
-        println!("t:{:?}", t);
+/// Transition labelling in the Local Product is done according to the MDP transition and the function
+/// delta(q, w) where w = L(s'), and s in S from the MDP M.
+#[allow(dead_code)]
+pub fn create_prod_transitions<'a, 'b>(mdp: &'a MDP2, dfa: &'a DFA, states: &'b [DFAModelCheckingPair<'a>])
+                                   -> Vec<DFAProductTransition<'a>> {
+    let mut transitions: Vec<DFAProductTransition> = Vec::new();
+    for state in states.iter() {
+        for transition in mdp.transitions.iter()
+            .filter(|x| x.s == state.state.s) {
+            let mut t = DFAProductTransition {
+                sq: DFAModelCheckingPair { state: ProdState { s: state.state.s, q: state.state.q }, w: vec![] },
+                a: transition.a.to_string(),
+                sq_prime: vec![],
+                reward: 0.0
+            };
+            t.reward = transition.rewards; // this is the reward inherited from the MDP
+            //println!("s:{:?}", state);
+            for sprime in transition.s_prime.iter() {
+                let label = mdp.labelling.iter().find(|x| x.s == sprime.s).unwrap();
+                let q_prime = dfa.delta.iter().find(|x| x.q == state.state.q && x.w.iter().
+                    any(|y| label.w.iter().any(|z| z == y)));
+
+                match q_prime {
+                    None => {panic!("No transition found: {:?}", state);}
+                    Some(x) => {
+                        //println!("q': {:?}", q_prime);
+                        t.sq_prime.push(DFATransitionPair {
+                            state: DFAModelCheckingPair { state: ProdState { s: sprime.s, q: x.q_prime }, w: vec![] },
+                            p: sprime.p
+                        });
+                    }
+                }
+            }
+            if t.sq_prime.is_empty() {
+                panic!("state: {:?}", state);
+            }
+            transitions.push(t);
+        }
     }
-    let mut g = local_product.generate_graph();
-    let initially_reachable = local_product.reachable_from_initial(&g);
-    let (prune_states_indices, prune_states) : (Vec<usize>, Vec<DFAModelCheckingPair>) = local_product.prune_candidates(&initially_reachable);
-    local_product.prune_states_transitions(&prune_states_indices, &prune_states);
-    local_product.create_labelling(mdp);
-    local_product.modify_complete(dfa);
-    //println!("modifying agent: {} task: {}", i, j);
-    local_product.edit_labelling(dfa, mdp);
-    local_product
+    transitions
+}
+
+#[allow(dead_code)]
+pub fn create_reachable_states_with_labels<'a, 'b>(init_state: DFAModelCheckingPair, states: &'b [DFAModelCheckingPair],
+                                  reachable_state_truth: &'b [bool],
+                                  dfa: &'a DFA, hini: &'a HashSet<&'a str>, hcom: &'a HashSet<&'a str>, hsuc: &'a HashSet<&'a str>,
+                                  hfai: &'a HashSet<&'a str>, mdp_init_state: &'a u32)
+    -> Vec<DFAModelCheckingPair<'a>> {
+    let mut reachable_states: Vec<DFAModelCheckingPair> = Vec::with_capacity(reachable_state_truth.iter().filter(|x| **x).count());
+    for (i,truth) in reachable_state_truth.iter().enumerate() {
+        if *truth {
+            let mut state = DFAModelCheckingPair{ state: ProdState { s: states[i].state.s, q: states[i].state.q }, w: vec![] };
+            if state == init_state {
+                state.w = vec![hini];
+            } else if dfa.jacc.iter().any(|x| *x == state.state.q) {
+                state.w = vec![hcom];
+            } else if state.state.s == *mdp_init_state && dfa.dead.iter().any(|x| *x == state.state.q) {
+                state.w = vec![hfai]
+            } else if state.state.s == *mdp_init_state && dfa.acc.iter().any(|x| *x == state.state.q) {
+                state.w = vec![hsuc];
+            }
+            reachable_states.push(state);
+        }
+    }
+    reachable_states
+}
+
+/// DFS to search all states reachable from intial
+#[allow(dead_code)]
+pub fn reachable_from_initial<'a>(initial: &'a DFAModelCheckingPair, states: &'a [DFAModelCheckingPair], transitions: &'a [DFAProductTransition]) -> Vec<bool> {
+    let mut stack: Vec<&'a DFAModelCheckingPair> = Vec::new();
+    let mut visited: Vec<bool> = vec![false; states.len()];
+    stack.push(initial);
+    let initial_index = states.iter().position(|x| x == initial).unwrap();
+    visited[initial_index] = true;
+    while !stack.is_empty() {
+        let current_state = stack.pop().unwrap();
+        // get all of the current states transitions
+        for tr in transitions.iter().
+            filter(|x| x.sq.state == current_state.state){
+            for sprime in tr.sq_prime.iter() {
+                let sprime_index = states.iter().
+                    position(|x| x.state == sprime.state.state).unwrap();
+                if !visited[sprime_index] {
+                    visited[sprime_index] = true;
+                    stack.push(&sprime.state);
+                }
+            }
+        }
+    }
+    visited
 }
 
 #[derive(Clone, Debug)]
-pub struct TeamInput {
+pub struct TeamInput<'a> {
     pub agent: usize,
     pub task: usize,
-    pub product: DFAProductMDP,
-    pub dead: Vec<u32>,
-    pub acc: Vec<u32>
-}
-
-impl TeamInput {
-    pub fn default() -> TeamInput {
-        TeamInput {
-            agent: 0,
-            task: 0,
-            product: DFAProductMDP {
-                states: vec![],
-                initial: DFAModelCheckingPair { s: 0, q: 0 },
-                transitions: vec![],
-                labelling: vec![],
-            },
-            dead: vec![],
-            acc: vec![],
-        }
-    }
+    pub product: &'a DFAProductMDP<'a>,
+    pub dead: &'a Vec<u32>,
+    pub acc: &'a Vec<u32>,
+    pub jacc: &'a Vec<u32>
 }
 
 #[derive(Debug, Clone)]
-pub struct DFAProductTransition {
-    pub sq: DFAModelCheckingPair,
+pub struct DFAProductTransition<'a> {
+    pub sq: DFAModelCheckingPair<'a>,
     pub a: String,
-    pub sq_prime: Vec<DFATransitionPair>,
+    pub sq_prime: Vec<DFATransitionPair<'a>>,
     pub reward: f64
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct DFAProductLabellingPair {
-    pub sq: DFAModelCheckingPair,
-    pub w: Vec<String>
-}
+/*#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct DFAProductLabellingPair<'a> {
+    pub sq: DFAModelCheckingPair<'a>,
+    pub w: Vec<&'a HashSet<&'a str>>
+}*/
 
 /// A DFA transition pair is a state and a probability of transitioning to this state
 #[derive(Debug, Clone, PartialEq)]
-pub struct DFATransitionPair {
-    pub state: DFAModelCheckingPair,
+pub struct DFATransitionPair<'a> {
+    pub state: DFAModelCheckingPair<'a>,
     pub p: f64
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Copy)]
-pub struct DFAModelCheckingPair {
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+pub struct DFAModelCheckingPair<'a> {
+    pub state: ProdState,
+    pub w: Vec<&'a HashSet<&'a str>>
+}
+
+#[derive(Default, Debug, Clone, Eq, PartialEq)]
+pub struct ProdState {
     pub s: u32,
-    pub q: u32,
+    pub q: u32
 }
 
 

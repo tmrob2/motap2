@@ -1,9 +1,10 @@
 extern crate gurobi;
 use gurobi::*;
 use std::collections::HashMap;
-use super::decomp_team_mdp;
+//use super::decomp_team_mdp;
 
-pub fn witness(hullset: &Vec<Vec<f64>>, target: &Vec<f64>, dim: &usize, num_agents: &usize) -> Option<Vec<f64>> {
+#[allow(dead_code)]
+pub fn witness(hullset: &Vec<Vec<f64>>, target: &Vec<f64>, dim: &usize) -> Option<Vec<f64>> {
 
     //let env = Env::new().unwrap();
     let mut env = gurobi::Env::new("").unwrap();
@@ -49,16 +50,16 @@ pub fn witness(hullset: &Vec<Vec<f64>>, target: &Vec<f64>, dim: &usize, num_agen
         //println!("q_new: {:?}", q_new);
         //println!("u vars: {}", &u_vars[..].len());
         let ui_expr1 = ui_expr.add_terms(&q_new[..], &u_vars[..]);
-        model.add_constr(&*format!("c{}", i), ui_expr1, Greater, target[i]);
+        model.add_constr(&*format!("c{}", i), ui_expr1, Greater, target[i]).ok();
         //}
         //println!("q.v: {}, r:{}", q_sum, target[i]);
 
         //println!("q_transpose: {:?}", q_transpose[i]);
     }
-    let mut u_expr = LinExpr::new();
+    let u_expr = LinExpr::new();
     let coefs: Vec<f64> = vec![1.0; hullset.len()];
     let final_expr = u_expr.add_terms( &coefs[..], &u_vars[..]);
-    model.add_constr("u_final", final_expr, gurobi::Equal, 1.0);
+    model.add_constr("u_final", final_expr, gurobi::Equal, 1.0).ok();
 
     model.update().unwrap();
     model.set_objective(dummy,gurobi::Maximize).unwrap();
@@ -82,14 +83,15 @@ pub fn witness(hullset: &Vec<Vec<f64>>, target: &Vec<f64>, dim: &usize, num_agen
 
 }
 
+#[allow(dead_code)]
 pub fn lp5(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Option<Vec<f64>> {
     //h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize
     let mut env = gurobi::Env::new("").unwrap();
-    env.set(param::OutputFlag, 0).unwrap();
-    env.set(param::LogToConsole, 0).unwrap();
-    env.set(param::InfUnbdInfo, 1);
+    env.set(param::OutputFlag, 0).ok();
+    env.set(param::LogToConsole, 0).ok();
+    env.set(param::InfUnbdInfo, 1).ok();
     //env.set(param::FeasibilityTol,10e-9).unwrap();
-    env.set(param::NumericFocus,2).unwrap();
+    env.set(param::NumericFocus,2).ok();
     let mut model = Model::new("model1", &env).unwrap();
     let scale: f64 = 1f64;
 
@@ -115,24 +117,24 @@ pub fn lp5(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Option<Vec<f64>> {
         w_vars.push(w.clone());
     }
 
-    let mut t_expr = LinExpr::new();
+    let t_expr = LinExpr::new();
     let t_expr1 = t_expr.add_terms(&t[..], &w_vars[..]);
     let t_expr2 = t_expr1.add_term(1.0, d.clone());
     let t_expr3 = t_expr2.add_constant(-1.0);
-    model.add_constr("t0", t_expr3, gurobi::Greater, 0.0);
+    model.add_constr("t0", t_expr3, gurobi::Greater, 0.0).ok();
 
     for (i, x) in h.iter().enumerate() {
-        let mut expr = LinExpr::new();
+        let expr = LinExpr::new();
         let expr1 = expr.add_terms(&x[..], &w_vars[..]);
         let expr2 = expr1.add_term(1.0, d.clone());
         let expr3 = expr2.add_constant(-1.0);
-        model.add_constr(&*format!("c{}", i), expr3, gurobi::Less, 0.0);
+        model.add_constr(&*format!("c{}", i), expr3, gurobi::Less, 0.0).ok();
     }
 
-    let mut w_expr = LinExpr::new();
+    let w_expr = LinExpr::new();
     let coefs: Vec<f64> = vec![1.0; *dim];
     let final_expr = w_expr.add_terms( &coefs[..], &w_vars[..]);
-    model.add_constr("w_final", final_expr, gurobi::Equal, scale);
+    model.add_constr("w_final", final_expr, gurobi::Equal, scale).ok();
 
     model.update().unwrap();
 

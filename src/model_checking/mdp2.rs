@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MDP2<'a> {
     pub states: Vec<u32>,
     pub initial: u32,
