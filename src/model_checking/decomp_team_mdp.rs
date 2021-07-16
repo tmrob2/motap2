@@ -5,13 +5,11 @@ use super::gurobi_lp;
 //use petgraph::{Graph};
 use std::collections::{HashSet};
 use ndarray::prelude::*;
-use ndarray::{Data, RemoveAxis, Zip};
-use std::cmp::Ordering;
 use helper_methods::*;
 use dfa::*;
 //use mdp2::*;
 use gurobi_lp::*;
-use std::time::Instant;
+//use std::time::Instant;
 //use std::time::Instant;
 
 #[allow(dead_code)]
@@ -52,7 +50,7 @@ pub fn multi_obj_sched_synth_non_iter(target: &[f64], eps: &f64, states: &[TeamS
     }
     let team_init_index = init_ix;
 
-    let mut extreme_points: Vec<Vec<f64>> = vec![vec![0.0; num_agents + num_tasks]; num_agents + num_tasks];
+    //let mut extreme_points: Vec<Vec<f64>> = vec![vec![0.0; num_agents + num_tasks]; num_agents + num_tasks];
     /*
     for k in 0..(num_tasks + num_agents) {
         extreme_points[k][k] = 1.0;
@@ -167,7 +165,7 @@ pub fn multi_obj_sched_synth(target: &[f64], eps: &f64, ranges: &[(usize, usize)
 
     let team_init_index = init_ix;
 
-    let mut extreme_points: Vec<Vec<f64>> = vec![vec![0.0; num_agents + num_tasks]; num_agents + num_tasks];
+    //let mut extreme_points: Vec<Vec<f64>> = vec![vec![0.0; num_agents + num_tasks]; num_agents + num_tasks];
     /*
     for k in 0..(num_tasks + num_agents) {
         extreme_points[k][k] = 1.0;
@@ -681,86 +679,5 @@ pub struct TeamAttrs<'a> {
     pub dead: &'a Vec<u32>,
     pub acc: &'a Vec<u32>,
     pub jacc: &'a Vec<u32>
-}
-
-#[derive(Clone, Debug)]
-pub struct Permutation {
-    indices: Vec<usize>,
-}
-
-impl Permutation {
-    /// Checks if the permutation is correct
-    pub fn from_indices(v: Vec<usize>) -> Result<Self, ()> {
-        let perm = Permutation { indices: v };
-        if perm.correct() {
-            Ok(perm)
-        } else {
-            Err(())
-        }
-    }
-
-    fn correct(&self) -> bool {
-        let axis_len = self.indices.len();
-        let mut seen = vec![false; axis_len];
-        for &i in &self.indices {
-            match seen.get_mut(i) {
-                None => return false,
-                Some(s) => {
-                    if *s {
-                        return false;
-                    } else {
-                        *s = true;
-                    }
-                }
-            }
-        }
-        true
-    }
-}
-
-pub trait SortArray {
-    /// ***Panics*** if `axis` is out of bounds.
-    fn identity(&self, axis: Axis) -> Permutation;
-    fn sort_axis_by<F>(&self, axis: Axis, less_than: F) -> Permutation
-        where
-            F: FnMut(usize, usize) -> bool;
-}
-
-pub trait PermuteArray {
-    type Elem;
-    type Dim;
-    fn permute_axis(self, axis: Axis, perm: &Permutation) -> Array<Self::Elem, Self::Dim>
-        where
-            Self::Elem: Clone,
-            Self::Dim: RemoveAxis;
-}
-
-impl<A, S, D> SortArray for ArrayBase<S, D>
-    where
-        S: Data<Elem = A>,
-        D: Dimension,
-{
-    fn identity(&self, axis: Axis) -> Permutation {
-        Permutation {
-            indices: (0..self.len_of(axis)).collect(),
-        }
-    }
-
-    fn sort_axis_by<F>(&self, axis: Axis, mut less_than: F) -> Permutation
-        where
-            F: FnMut(usize, usize) -> bool,
-    {
-        let mut perm = self.identity(axis);
-        perm.indices.sort_by(move |&a, &b| {
-            if less_than(a, b) {
-                Ordering::Less
-            } else if less_than(b, a) {
-                Ordering::Greater
-            } else {
-                Ordering::Equal
-            }
-        });
-        perm
-    }
 }
 
