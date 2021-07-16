@@ -11,9 +11,10 @@ use std::time::Instant;
 
 fn main() {
     let mut words: HashMap<&str, HashSet<&str>> = HashMap::new();
-    let mut initiate_letters: Vec<String> = Vec::with_capacity(4);
-    let mut send_letters: Vec<String> = Vec::with_capacity(4);
-    let num_tasks: usize = 4;
+    let num_tasks: usize = 2;
+    let mut initiate_letters: Vec<String> = Vec::with_capacity(num_tasks);
+    let mut send_letters: Vec<String> = Vec::with_capacity(num_tasks);
+
     for tasks in 0..num_tasks {
         initiate_letters.push(format!("initiate({})", tasks));
         send_letters.push(format!("send({})", tasks));
@@ -37,41 +38,35 @@ fn main() {
     let _done: &str = "done";
     let _rewards: Rewards = Rewards::NEGATIVE;
 
-    let send_k_tasks: Vec<DFA> = Vec::with_capacity(num_tasks);
+    let mut send_k_tasks: Vec<DFA> = Vec::with_capacity(num_tasks);
 
-    let send_1_task: DFA = construct_send_task(1, 0, num_tasks, &words, &hempty, &hready, &hexit, &ref_init_letters[..], &ref_send_letters[..]);
-    let send_2_task: DFA = construct_send_task(2, 1, num_tasks, &words, &hempty, &hready, &hexit, &ref_init_letters[..], &ref_send_letters[..]);
-    let send_3_task: DFA = construct_send_task(3, 2, num_tasks, &words, &hempty, &hready, &hexit, &ref_init_letters[..], &ref_send_letters[..]);
-    let send_4_task: DFA = construct_send_task(4, 3, num_tasks, &words, &hempty, &hready, &hexit, &ref_init_letters[..], &ref_send_letters[..]);
+    for k in 1..num_tasks + 1 {
+        let send_k_task: DFA = construct_send_task(k as u32, k-1, num_tasks, &words, &hempty, &hready, &hexit, &ref_init_letters[..], &ref_send_letters[..]);
+        send_k_tasks.push(send_k_task);
+    }
 
-    let empty_dfa_states: Vec<CrossProdState> = vec![];
-    let empty_dfa_transitions: Vec<CrossProdTransition> = vec![];
-    let empty_jacc: Vec<CrossProdState> = Vec::new();
-    let empty_acc: Vec<CrossProdState> = Vec::new();
-    let empty_dead: Vec<CrossProdState> = Vec::new();
-    let blank_init = CrossProdState { q: 0, desc: "".to_string(), trans_ix: vec![], active_ix: 0, jacc: false, acc: false, dead: false, init: false, switch_to: false, task_complete: vec![], done: false };
-    let (cross_prod_states, cross_prod_transitions, cross_prod_jacc,
-        cross_prod_acc, cross_prod_dead, cross_prod_init) =
-        create_new_states_and_transitions(&empty_dfa_states[..], &send_1_task.states[..], &empty_dfa_transitions[..],
-                                          &send_1_task.delta[..], &empty_acc[..], &empty_dead[..], &empty_jacc[..], blank_init,
-                                          &send_1_task.acc[..], &send_1_task.jacc[..],&send_1_task.dead[..], send_1_task.initial, 0);
-    let (cross_prod_states, cross_prod_transitions, cross_prod_jacc,
-        cross_prod_acc, cross_prod_dead, cross_prod_init) =
-        create_new_states_and_transitions(&cross_prod_states[..], &send_2_task.states[..], &cross_prod_transitions[..],
-                                          &send_2_task.delta[..],&cross_prod_acc[..], &cross_prod_dead[..], &cross_prod_jacc[..],cross_prod_init,
-                                          &send_2_task.acc[..], &send_2_task.jacc[..],&send_2_task.dead[..], send_2_task.initial, 1);
+    let mut cross_prod_states: Vec<CrossProdState> = vec![];
+    let mut cross_prod_transitions: Vec<CrossProdTransition> = vec![];
+    let mut cross_prod_jacc: Vec<CrossProdState> = Vec::new();
+    let mut cross_prod_acc: Vec<CrossProdState> = Vec::new();
+    let mut cross_prod_dead: Vec<CrossProdState> = Vec::new();
+    let mut cross_prod_init = CrossProdState { q: 0, desc: "".to_string(), trans_ix: vec![], active_ix: 0, jacc: false, acc: false, dead: false, init: false, switch_to: false, task_complete: vec![], done: false };
 
-    let (cross_prod_states, cross_prod_transitions, cross_prod_jacc,
-        cross_prod_acc, cross_prod_dead, cross_prod_init) =
-        create_new_states_and_transitions(&cross_prod_states[..], &send_3_task.states[..], &cross_prod_transitions[..],
-                                          &send_3_task.delta[..],&cross_prod_acc[..], &cross_prod_dead[..], &cross_prod_jacc[..],cross_prod_init,
-                                          &send_3_task.acc[..], &send_3_task.jacc[..],&send_3_task.dead[..], send_3_task.initial, 2);
-
-    let (cross_prod_states, cross_prod_transitions, cross_prod_jacc,
-        cross_prod_acc, cross_prod_dead, cross_prod_init) =
-        create_new_states_and_transitions(&cross_prod_states[..], &send_4_task.states[..], &cross_prod_transitions[..],
-                                          &send_4_task.delta[..],&cross_prod_acc[..], &cross_prod_dead[..], &cross_prod_jacc[..],cross_prod_init,
-                                          &send_4_task.acc[..], &send_4_task.jacc[..],&send_4_task.dead[..], send_4_task.initial, 3);
+    println!("Constructing Task Automata");
+    for k in 0..num_tasks {
+        let send_k_task = &send_k_tasks[k];
+        let (cross_prod_states_update, cross_prod_transitions_update, cross_prod_jacc_update,
+            cross_prod_acc_update, cross_prod_dead_update, cross_prod_init_update) =
+            create_new_states_and_transitions(&cross_prod_states[..], &send_k_task.states[..], &cross_prod_transitions[..],
+                                              &send_k_task.delta[..], &cross_prod_acc[..], &cross_prod_dead[..], &cross_prod_jacc[..], cross_prod_init.clone(),
+                                              &send_k_task.acc[..], &send_k_task.jacc[..],&send_k_task.dead[..], send_k_task.initial, k as i32);
+        cross_prod_states = cross_prod_states_update;
+        cross_prod_transitions = cross_prod_transitions_update;
+        cross_prod_jacc = cross_prod_jacc_update;
+        cross_prod_acc = cross_prod_acc_update;
+        cross_prod_dead = cross_prod_dead_update;
+        cross_prod_init = cross_prod_init_update;
+    }
 
     let task_automaton = CrossProdDFA {
         states: cross_prod_states,
@@ -81,14 +76,18 @@ fn main() {
         jacc: cross_prod_jacc
     };
     let mdp = construct_mdp(&hempty, &hinitiate, &hready, &hexit, &hsend);
-    let mdps: Vec<MDP2> = vec![mdp.clone(), mdp.clone()];
-    let num_agents: usize = 2;
+    let mdps: Vec<MDP2> = vec![mdp.clone(); 100];
+    let num_agents: usize = 100;
     let mut local_prods: Vec<LocalProduct> = Vec::with_capacity(num_tasks * num_agents);
+    println!("Constructing Local Products");
     for mdp in mdps.iter() {
+        println!("constructing states");
         let local_prod_states = create_local_prod_states(&mdp.states[..], &task_automaton.states[..], mdp.initial);
         let local_prod_init = local_prod_states.iter().position(|x| x.s == mdp.initial && x.q == cross_prod_init.q).unwrap();
+        println!("constructing transitions");
         let local_prod_trans =
             create_local_prod_transitions(&local_prod_states[..], &mdp.labelling[..], &mdp.transitions[..], &task_automaton.delta[..], num_tasks as i32);
+        println!("Finding reachable states");
         let reachable_s = reachable_states(&local_prod_states[..], &local_prod_trans[..], local_prod_init);
         let mut reachable_trans: Vec<LocalProdTransitions> = Vec::new();
         for (ix, s) in reachable_s.iter().enumerate() {
@@ -126,6 +125,7 @@ fn main() {
     let mut team_transitions: Vec<TeamTransition> = Vec::new();
     let mut switch_from_input: Vec<usize> = Vec::new();
     let mut prev_init_index: usize = 0;
+    println!("Constructing Team MDP");
     for (k, loc_prod) in local_prods.iter().enumerate() {
         let (_team_states, _team_transitions, switch_state_ix_update, trans_count_ix_update, state_count_ix_update, prev_init_index_update) =
             create_state_trans_index_mapping(&loc_prod.states[..],&loc_prod.transitions[..],loc_prod.init, prev_init_index, k,
@@ -144,61 +144,21 @@ fn main() {
         states: team_states,
         transitions: team_transitions
     };
-    /*for state in team_mdp.states.iter() {
-        print!("s:({},{},{}) ->  ",team_mdp.states[state.ix].s, team_mdp.states[state.ix].desc,
-               team_mdp.states[state.ix].agent);
-        for t in state.trans_ix.iter() {
-            let transition = &team_mdp.transitions[*t];
 
-            for sprime in transition.s_prime.iter() {
-                 print!("(a:{})-> s':({},{},{})", transition.a, team_mdp.states[sprime.s].s, team_mdp.states[sprime.s].desc,
-                       team_mdp.states[sprime.s].agent);
-                print!(", ");
-            }
-        }
-        println!();
-    }
+    println!("|S|: {}, |P|: {}", team_mdp.states.len(), team_mdp.transitions.len());
 
-     */
-    /*
-    let mut hullset: Vec<Vec<f64>> = Vec::new();
-    let mut mu_vect: Vec<Vec<String>> = Vec::new();
-    let epsilon: f64 = 0.00001;
-    let verbose: bool = true;
-    //let mut extreme_points: Vec<Vec<f64>> = vec![vec![0.0; num_agents + num_tasks]; num_agents + num_tasks];
-
-    let w_extr: &Vec<f64> = &vec![0.3,0.4,0.3];
-    if verbose {
-        println!("w: {:?}", w_extr);
-    }
-
-    let safe_ret = opt_exp_tot_cost_non_iter(&w_extr[..], &epsilon, &team_mdp.states[..], &team_mdp.transitions[..],
-                                             &rewards, &num_agents, &num_tasks, &team_init_index);
-    match safe_ret {
-        Some((mu_new, r)) => {
-            hullset.push(r);
-            mu_vect.push(mu_new);
-        },
-        None => panic!("No value was returned from the maximisation")
-    }
-    println!("extreme points: ");
-
-    for k in hullset.iter() {
-        print!("p: [");
-        for (i, j) in k.iter().enumerate() {
-            if i == 0 {
-                print!("{0:.1$}", j, 2);
-            } else {
-                print!(" ,{0:.1$}", j, 2);
-            }
-        }
-        print!("]");
-        println!();
-    }
-
-     */
-
-    let target: Vec<f64> = vec![-25.0, -25.0, 0.7, 0.7, 0.7, 0.7];
+    let target: Vec<f64> = vec![
+        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
+        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
+        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
+        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
+        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
+        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
+        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
+        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
+        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
+        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
+                                0.5, 0.5];
     let epsilon: f64 = 0.00001;
     let start = Instant::now();
     let _output = multi_obj_sched_synth_non_iter(team_init_index,

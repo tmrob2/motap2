@@ -4,7 +4,7 @@ use std::collections::HashMap;
 //use super::decomp_team_mdp;
 
 #[allow(dead_code)]
-pub fn witness(hullset: &Vec<Vec<f64>>, target: &Vec<f64>, dim: &usize) -> Option<Vec<f64>> {
+pub fn witness(hullset: &Vec<Vec<f64>>, target: &[f64], dim: &usize) -> Option<Vec<f64>> {
 
     //let env = Env::new().unwrap();
     let mut env = gurobi::Env::new("").unwrap();
@@ -84,7 +84,7 @@ pub fn witness(hullset: &Vec<Vec<f64>>, target: &Vec<f64>, dim: &usize) -> Optio
 }
 
 #[allow(dead_code)]
-pub fn lp5(h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize) -> Option<Vec<f64>> {
+pub fn lp5(h: &Vec<Vec<f64>>, t: &[f64], dim: &usize) -> Option<Vec<f64>> {
     //h: &Vec<Vec<f64>>, t: &Vec<f64>, dim: &usize
     let mut env = gurobi::Env::new("").unwrap();
     env.set(param::OutputFlag, 0).ok();

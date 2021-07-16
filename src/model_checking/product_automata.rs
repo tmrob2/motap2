@@ -11,10 +11,11 @@ use regex::Regex;
 // -----------------------------------
 // Task Automaton A1 x A2 x ... x An
 // -----------------------------------
-pub fn create_new_states_and_transitions<'a>(q1: &[CrossProdState], q2: &[u32], delta1: &[CrossProdTransition<'a>],
-                                             delta2: &[DFATransitions<'a>], acc1: &'a [CrossProdState], dead1: &'a [CrossProdState],
-                                             _jacc1: &'a [CrossProdState], init1: CrossProdState,
-                                             acc2: &'a [u32], jacc2: &'a [u32], dead2: &'a [u32], init2: u32, task: i32)
+#[allow(dead_code)]
+pub fn create_new_states_and_transitions<'a, 'b>(q1: &'b [CrossProdState], q2: &'b [u32], delta1: &'b [CrossProdTransition<'a>],
+                                             delta2: &'b [DFATransitions<'a>], acc1: &'b [CrossProdState], dead1: &'b [CrossProdState],
+                                             _jacc1: &'b [CrossProdState], init1: CrossProdState,
+                                             acc2: &'b [u32], jacc2: &'b [u32], dead2: &'b [u32], init2: u32, task: i32)
     -> (Vec<CrossProdState>, Vec<CrossProdTransition<'a>>, Vec<CrossProdState>, Vec<CrossProdState>, Vec<CrossProdState>, CrossProdState){
     let mut new_states: Vec<CrossProdState> = Vec::with_capacity(q1.len() * q2.len());
     let mut new_transition: Vec<CrossProdTransition> = Vec::new();
@@ -192,6 +193,7 @@ pub fn create_new_states_and_transitions<'a>(q1: &[CrossProdState], q2: &[u32], 
     (new_states, new_transition, jacc_new, acc_new, dead_new, init_new)
 }
 
+#[allow(dead_code)]
 fn intersect<'a, 'b>(w1: &'b [&'a HashSet<&'a str>], w2: &'b [&'a HashSet<&'a str>]) -> Vec<&'a HashSet<&'a str>> {
     let intersection: Vec<_> = w1.iter().filter(|x| w2.iter().any(|y| *x == y)).map(|x| *x).collect();
     intersection
@@ -324,6 +326,7 @@ pub fn create_local_prod_transitions<'a>(states: &'a [LocalProdState], mdp_label
     local_prod_trans
 }
 
+#[allow(dead_code)]
 pub fn reachable_states<'a, 'b>(states: &'b [LocalProdState<'a>], transitions: &'b [LocalProdTransitions], init_state: usize) -> Vec<LocalProdState<'a>> {
     let mut visited: Vec<bool> = vec![false; states.len()];
     visited[init_state] = true;

@@ -8,6 +8,7 @@ use gurobi_lp::*;
 // ------------------------------------
 // STAPU Team MDP Structure
 // -------------------------------------
+#[allow(dead_code)]
 pub fn create_state_trans_index_mapping<'a, 'b>(loc_prod_states: &[LocalProdState], loc_prod_trans: &'a [LocalProdTransitions], loc_prod_init: usize,
                                             prev_init_index: usize, agent: usize, current_state_ix: usize, current_transition_ix: usize,
                                             num_agents: usize, num_tasks: usize, rewards: &'a Rewards,
@@ -328,6 +329,7 @@ pub struct Alg1Output {
     pub hullset: Vec<Vec<f64>>
 }
 
+#[allow(dead_code)]
 pub struct TeamMDP {
     pub states: Vec<TeamState>,
     pub transitions: Vec<TeamTransition>

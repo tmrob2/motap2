@@ -4,14 +4,17 @@ use super::dfa;
 use super::gurobi_lp;
 //use petgraph::{Graph};
 use std::collections::{HashSet};
-use ndarray::{arr1};
-
+use ndarray::prelude::*;
+use ndarray::{Data, RemoveAxis, Zip};
+use std::cmp::Ordering;
 use helper_methods::*;
 use dfa::*;
 //use mdp2::*;
 use gurobi_lp::*;
+use std::time::Instant;
 //use std::time::Instant;
 
+#[allow(dead_code)]
 pub struct TeamMDP<'a> {
     pub initial: TeamState<'a>,
     pub states: Vec<TeamState<'a>>,
@@ -24,208 +27,241 @@ pub struct TeamMDP<'a> {
 impl <'a>TeamMDP<'a> {
 
     /// Iterative version of multi-objective model checking
-    #[allow(dead_code)]
-    pub fn multi_obj_sched_synth(&self, target: &Vec<f64>, eps: &f64, rewards: &Rewards, verbose: &bool) -> Alg1Output {
-        let mut hullset: Vec<Vec<f64>> = Vec::new();
-        let mut mu_vect: Vec<Vec<String>> = Vec::new();
-        let mut alg1_output: Alg1Output = Alg1Output{
-            v: vec![],
-            mu: vec![],
-            hullset: vec![]
-        };
-        if *verbose {
-            println!("num tasks: {}, num agents {}", self.num_tasks, self.num_agents);
-        }
-
-        let team_init_index = self.initial.ix;
-
-        let mut extreme_points: Vec<Vec<f64>> = vec![vec![0.0; self.num_agents + self.num_tasks]; self.num_agents + self.num_tasks];
-
-        for k in 0..(self.num_tasks + self.num_agents) {
-            extreme_points[k][k] = 1.0;
-            let w_extr: &Vec<f64> = &extreme_points[k];
-            if *verbose {
-                println!("w: {:?}", w_extr);
-            }
-            let safe_ret = opt_exp_tot_cost(&w_extr[..], &eps, &self.states[..], &self.transitions[..],
-                                            &rewards, &self.num_agents, &self.num_tasks, &team_init_index);
-            match safe_ret {
-                Some((mu_new, r)) => {
-                    hullset.push(r);
-                    mu_vect.push(mu_new);
-                },
-                None => panic!("No value was returned from the maximisation")
-            }
-        }
-        if *verbose {
-            println!("extreme points: ");
-            for k in hullset.iter() {
-                print!("p: [");
-                for (i, j) in k.iter().enumerate() {
-                    if i == 0 {
-                        print!("{0:.1$}", j, 2);
-                    } else {
-                        print!(" ,{0:.1$}", j, 2);
-                    }
-                }
-                print!("]");
-                println!();
-            }
-        }
-        let dim = self.num_tasks + self.num_agents;
-        let t_arr1 = arr1(target);
-        let mut w_new = lp5(&hullset, target, &dim);
-        while w_new != None {
-            if *verbose {
-                println!("w' :{:?}", w_new);
-            }
-            let safe_ret = opt_exp_tot_cost(&w_new.as_ref().unwrap()[..], &eps, &self.states[..], &self.transitions[..],
-                                            &rewards, &self.num_agents, &self.num_tasks, &team_init_index);
-            match safe_ret {
-                Some((mu_new, r)) => {
-                    if *verbose {
-                        println!("new r: {:?}", r);
-                    }
-                    let weight_arr1 = arr1(&w_new.as_ref().unwrap());
-                    let r_arr1 = arr1(&r);
-                    let wr_dot = weight_arr1.dot(&r_arr1);
-                    let wt_dot = weight_arr1.dot(&t_arr1);
-                    if *verbose {
-                        println!("<w,r>: {}, <w,t>: {}", wr_dot, wt_dot);
-                    }
-                    if wr_dot < wt_dot {
-                        if *verbose {
-                            println!("Multi-objective satisfaction not possible");
-                        }
-                        return alg1_output;
-                    }
-                    hullset.push(r);
-                    mu_vect.push(mu_new);
-                },
-                None => panic!("No value was returned from the maximisation")
-            }
-            w_new = lp5(&hullset, target, &dim);
-        }
-        if *verbose {
-            println!("Constructing witness");
-        }
-        let v = witness(&hullset, &target, &dim);
-        if *verbose {
-            println!("v: {:?}", v);
-        }
-        match v {
-            None => {}
-            Some(x) => {alg1_output.v = x}
-        };
-        alg1_output.mu = mu_vect;
-        alg1_output.hullset =  hullset;
-        alg1_output
-    }
 
     /// The non iterative version of multi-objective value iteration, just loops over the state space to generate results
-    #[allow(dead_code)]
-    pub fn multi_obj_sched_synth_non_iter(&self, target: &Vec<f64>, eps: &f64, rewards: &Rewards, verbose: &bool) -> Alg1Output {
-        let mut hullset: Vec<Vec<f64>> = Vec::new();
-        let mut mu_vect: Vec<Vec<String>> = Vec::new();
-        let mut alg1_output: Alg1Output = Alg1Output{
-            v: vec![],
-            mu: vec![],
-            hullset: vec![]
-        };
-        if *verbose {
-            println!("num tasks: {}, num agents {}", self.num_tasks, self.num_agents);
-        }
-        let team_init_index = &self.initial.ix;
 
-        let mut extreme_points: Vec<Vec<f64>> = vec![vec![0.0; self.num_agents + self.num_tasks]; self.num_agents + self.num_tasks];
-
-        for k in 0..(self.num_tasks + self.num_agents) {
-            extreme_points[k][k] = 1.0;
-            let w_extr: &Vec<f64> = &extreme_points[k];
-            if *verbose {
-                println!("w: {:?}", w_extr);
-            }
-
-            let safe_ret = opt_exp_tot_cost_non_iter(&w_extr[..], &eps, &self.states[..], &self.transitions[..],
-                                            rewards, &self.num_agents, &self.num_tasks, &team_init_index);
-            match safe_ret {
-                Some((mu_new, r)) => {
-                    hullset.push(r);
-                    mu_vect.push(mu_new);
-                },
-                None => panic!("No value was returned from the maximisation")
-            }
-        }
-        if *verbose {
-            println!("extreme points: ");
-
-            for k in hullset.iter() {
-                print!("p: [");
-                for (i, j) in k.iter().enumerate() {
-                    if i == 0 {
-                        print!("{0:.1$}", j, 2);
-                    } else {
-                        print!(" ,{0:.1$}", j, 2);
-                    }
-                }
-                print!("]");
-                println!();
-            }
-        }
-        let dim = self.num_tasks + self.num_agents;
-        let t_arr1 = arr1(target);
-        let mut w_new = lp5(&hullset, target, &dim);
-        while w_new != None {
-            if *verbose {
-                println!("w' :{:?}", w_new);
-            }
-            let safe_ret = opt_exp_tot_cost_non_iter(&w_new.as_ref().unwrap()[..], &eps, &self.states[..], &self.transitions[..],
-                                            rewards, &self.num_agents, &self.num_tasks, &team_init_index);
-            match safe_ret {
-                Some((mu_new, r)) => {
-                    if *verbose {
-                        println!("new r: {:?}", r);
-                    }
-                    let weight_arr1 = arr1(&w_new.as_ref().unwrap());
-                    let r_arr1 = arr1(&r);
-                    let wr_dot = weight_arr1.dot(&r_arr1);
-                    let wt_dot = weight_arr1.dot(&t_arr1);
-                    if *verbose {
-                        println!("<w,r>: {}, <w,t>: {}", wr_dot, wt_dot);
-                    }
-                    if wr_dot < wt_dot {
-                        if *verbose {
-                            println!("Multi-objective satisfaction not possible");
-                        }
-                        return alg1_output;
-                    }
-                    hullset.push(r);
-                    mu_vect.push(mu_new);
-                },
-                None => panic!("No value was returned from the maximisation")
-            }
-            w_new = lp5(&hullset, target, &dim);
-        }
-        if *verbose {
-            println!("Constructing witness");
-        }
-        let v = witness(&hullset, &target, &dim);
-        if *verbose {
-            println!("v: {:?}", v);
-        }
-        match v {
-            None => {}
-            Some(x) => {alg1_output.v = x}
-        };
-        alg1_output.mu = mu_vect;
-        alg1_output.hullset =  hullset;
-        alg1_output
-    }
 
     #[allow(dead_code)]
     pub fn statistics(&self) -> (usize,usize) {
         (self.states.len(), self.transitions.len())
     }
+}
+
+#[allow(dead_code)]
+pub fn multi_obj_sched_synth_non_iter(target: &[f64], eps: &f64, states: &[TeamState], transitions: &[TeamTransition],
+                                      rewards: &Rewards, verbose: &bool, num_tasks: usize, num_agents: usize, init_ix: usize) -> Alg1Output {
+    let mut hullset: Vec<Vec<f64>> = Vec::new();
+    let mut mu_vect: Vec<Vec<String>> = Vec::new();
+    let mut alg1_output: Alg1Output = Alg1Output{
+        v: vec![],
+        mu: vec![],
+        hullset: vec![]
+    };
+    if *verbose {
+        println!("num tasks: {}, num agents {}", num_tasks, num_agents);
+    }
+    let team_init_index = init_ix;
+
+    let mut extreme_points: Vec<Vec<f64>> = vec![vec![0.0; num_agents + num_tasks]; num_agents + num_tasks];
+    /*
+    for k in 0..(num_tasks + num_agents) {
+        extreme_points[k][k] = 1.0;
+        let w_extr: &Vec<f64> = &extreme_points[k];
+        if *verbose {
+            println!("w: {:?}", w_extr);
+        }
+        let safe_ret = opt_exp_tot_cost_non_iter(&w_extr[..], &eps, states, transitions,
+                                                 rewards, &num_agents, &num_tasks, &team_init_index);
+        match safe_ret {
+            Some((mu_new, r)) => {
+                hullset.push(r);
+                mu_vect.push(mu_new);
+            },
+            None => panic!("No value was returned from the maximisation")
+        }
+    }
+
+     */
+    let w_extr: Vec<f64> = vec![1.0 / (num_agents + num_tasks) as f64; num_agents + num_tasks];
+    if *verbose {
+        println!("w: {:?}", w_extr);
+    }
+    let safe_ret = opt_exp_tot_cost_non_iter(&w_extr[..], &eps, states, transitions,
+                                             rewards, &num_agents, &num_tasks, &team_init_index);
+    match safe_ret {
+        Some((mu_new, r)) => {
+            hullset.push(r);
+            mu_vect.push(mu_new);
+        },
+        None => panic!("No value was returned from the maximisation")
+    }
+    if *verbose {
+        println!("extreme points: ");
+
+        for k in hullset.iter() {
+            print!("p: [");
+            for (i, j) in k.iter().enumerate() {
+                if i == 0 {
+                    print!("{0:.1$}", j, 2);
+                } else {
+                    print!(" ,{0:.1$}", j, 2);
+                }
+            }
+            print!("]");
+            println!();
+        }
+    }
+    let dim = num_tasks + num_agents;
+    let t_arr1 = arr1(target);
+    let mut w_new = lp5(&hullset, target, &dim);
+    while w_new != None {
+        if *verbose {
+            println!("w' :{:?}", w_new);
+        }
+        let safe_ret = opt_exp_tot_cost_non_iter(&w_new.as_ref().unwrap()[..], &eps, states, transitions,
+                                                 rewards, &num_agents, &num_tasks, &team_init_index);
+        match safe_ret {
+            Some((mu_new, r)) => {
+                if *verbose {
+                    println!("new r: {:?}", r);
+                }
+                let weight_arr1 = arr1(&w_new.as_ref().unwrap());
+                let r_arr1 = arr1(&r);
+                let wr_dot = weight_arr1.dot(&r_arr1);
+                let wt_dot = weight_arr1.dot(&t_arr1);
+                if *verbose {
+                    println!("<w,r>: {}, <w,t>: {}", wr_dot, wt_dot);
+                }
+                if wr_dot < wt_dot {
+                    if *verbose {
+                        println!("Multi-objective satisfaction not possible");
+                    }
+                    return alg1_output;
+                }
+                hullset.push(r);
+                mu_vect.push(mu_new);
+            },
+            None => panic!("No value was returned from the maximisation")
+        }
+        w_new = lp5(&hullset, target, &dim);
+    }
+    if *verbose {
+        println!("Constructing witness");
+    }
+    let v = witness(&hullset, target, &dim);
+    if *verbose {
+        println!("v: {:?}", v);
+    }
+    match v {
+        None => {}
+        Some(x) => {alg1_output.v = x}
+    };
+    alg1_output.mu = mu_vect;
+    alg1_output.hullset =  hullset;
+    alg1_output
+}
+
+#[allow(dead_code)]
+pub fn multi_obj_sched_synth(target: &[f64], eps: &f64, ranges: &[(usize, usize)], states: &[TeamState], transitions: &[TeamTransition],
+                             rewards: &Rewards, verbose: &bool, num_tasks: usize, num_agents: usize, init_ix: usize) -> Alg1Output {
+    let mut hullset: Vec<Vec<f64>> = Vec::new();
+    let mut mu_vect: Vec<Vec<String>> = Vec::new();
+    let mut alg1_output: Alg1Output = Alg1Output{
+        v: vec![],
+        mu: vec![],
+        hullset: vec![]
+    };
+    if *verbose {
+        println!("num tasks: {}, num agents {}", num_tasks, num_agents);
+    }
+
+    let team_init_index = init_ix;
+
+    let mut extreme_points: Vec<Vec<f64>> = vec![vec![0.0; num_agents + num_tasks]; num_agents + num_tasks];
+    /*
+    for k in 0..(num_tasks + num_agents) {
+        extreme_points[k][k] = 1.0;
+        let w_extr: &Vec<f64> = &extreme_points[k];
+        if *verbose {
+            println!("w: {:?}", w_extr);
+        }
+        let safe_ret = opt_exp_tot_cost(&w_extr[..], &eps, ranges, states, transitions,
+                                        &rewards, &num_agents, &num_tasks, &team_init_index);
+        match safe_ret {
+            Some((mu_new, r)) => {
+                hullset.push(r);
+                mu_vect.push(mu_new);
+            },
+            None => panic!("No value was returned from the maximisation")
+        }
+    }*/
+    let w_extr: Vec<f64> = vec![1.0 / (num_agents + num_tasks) as f64; num_agents + num_tasks];
+    if *verbose {
+        println!("w: {:?}", w_extr);
+    }
+    let safe_ret = opt_exp_tot_cost_non_iter(&w_extr[..], &eps, states, transitions,
+                                             rewards, &num_agents, &num_tasks, &team_init_index);
+    match safe_ret {
+        Some((mu_new, r)) => {
+            hullset.push(r);
+            mu_vect.push(mu_new);
+        },
+        None => panic!("No value was returned from the maximisation")
+    }
+    let dim = num_tasks + num_agents;
+    if *verbose {
+        println!("extreme points: ");
+        for k in hullset.iter() {
+            print!("p: [");
+            for (i, j) in k.iter().enumerate() {
+                if i == 0 {
+                    print!("{0:.1$}", j, 2);
+                } else {
+                    print!(" ,{0:.1$}", j, 2);
+                }
+            }
+            print!("]");
+            println!();
+        }
+    }
+
+    let t_arr1 = arr1(target);
+    let mut w_new = lp5(&hullset, target, &dim);
+    while w_new != None {
+        /*if *verbose {
+            println!("w' :{:?}", w_new);
+        }*/
+        let safe_ret = opt_exp_tot_cost(&w_new.as_ref().unwrap()[..], &eps, ranges, states, transitions,
+                                        &rewards, &num_agents, &num_tasks, &team_init_index);
+        match safe_ret {
+            Some((mu_new, r)) => {
+                /*if *verbose {
+                    println!("new r: {:?}", r);
+                }*/
+                let weight_arr1 = arr1(&w_new.as_ref().unwrap());
+                let r_arr1 = arr1(&r);
+                let wr_dot = weight_arr1.dot(&r_arr1);
+                let wt_dot = weight_arr1.dot(&t_arr1);
+                if *verbose {
+                    println!("<w,r>: {}, <w,t>: {}", wr_dot, wt_dot);
+                }
+                if wr_dot < wt_dot {
+                    if *verbose {
+                        println!("Multi-objective satisfaction not possible");
+                    }
+                    return alg1_output;
+                }
+                hullset.push(r);
+                mu_vect.push(mu_new);
+            },
+            None => panic!("No value was returned from the maximisation")
+        }
+        w_new = lp5(&hullset, target, &dim);
+    }
+    if *verbose{
+        println!("Constructing witness");
+    }
+    let v = witness(&hullset, &target, &dim);
+    if *verbose {
+        println!("v: {:?}", v);
+    }
+    match v {
+        None => {}
+        Some(x) => {alg1_output.v = x}
+    };
+    alg1_output.mu = mu_vect;
+    alg1_output.hullset =  hullset;
+    alg1_output
 }
 
 #[allow(dead_code)]
@@ -265,7 +301,7 @@ pub fn create_state_transition_mapping<'a, 'b, 'c>(states: &'a [DFAModelChecking
             // Assign the rewards, the product MDP will still be accumulating rewards
             let mut rewards: Vec<f64> = vec![0.0; num_agents + num_tasks];
             if jacc.iter().any(|x| *x == s.state.q) {
-                rewards[num_agents + task] = 1.0;
+                rewards[num_agents + task] = 1000.0;
             } else {
                 if task == num_tasks - 1 && (acc.iter().any(|x| *x == s.state.q) || dead.iter().any(|x| *x == s.state.q)) {
                     // do nothing
@@ -344,11 +380,22 @@ pub fn create_state_transition_mapping<'a, 'b, 'c>(states: &'a [DFAModelChecking
 }
 
 #[allow(dead_code)]
-pub fn opt_exp_tot_cost<'a>(w: &[f64], eps: &f64, states: &'a [TeamState<'a>], transitions: &'a [TeamTransition],
+pub fn create_ij_state_mapping(num_tasks: usize, num_agents: usize, states: &[TeamState]) -> Vec<(usize, usize)> {
+    let mut ranges: Vec<(usize, usize)> = Vec::with_capacity(num_agents * num_tasks);
+    for j in (0..num_tasks).rev() {
+        for i in (0..num_agents).rev() {
+            let range: Vec<_> = states.iter().filter(|x| x.agent == i && x.task == j).map(|x| x.ix).collect();
+            ranges.push((range[0], *range.last().unwrap()))
+        }
+    }
+    return ranges
+}
+
+#[allow(dead_code)]
+pub fn opt_exp_tot_cost<'a>(w: &[f64], eps: &f64, ranges: &'a [(usize, usize)], states: &'a [TeamState<'a>], transitions: &'a [TeamTransition],
                             rewards: &Rewards, num_agents: &usize, num_tasks: &usize, init_index: &'a usize)
                             -> Option<(Vec<String>, Vec<f64>)> {
     let mut mu: Vec<String> = vec!["".to_string(); states.len()];
-    // inserting into a hashmap might slow things down a lot, should check this
     let mut r: Vec<f64> = vec![0.0; w.len()];
     let weight = arr1(w);
 
@@ -361,12 +408,15 @@ pub fn opt_exp_tot_cost<'a>(w: &[f64], eps: &f64, states: &'a [TeamState<'a>], t
 
     let mut x_task_cost_vector: Vec<f64> = vec![0.0; states.len() * *num_tasks];
     let mut y_task_cost_vector: Vec<f64> = vec![0.0; states.len() * *num_tasks];
+    let mut ij_counter: usize = 0;
 
-    for j in (0..*num_tasks).rev() {
-        for i in (0..*num_agents).rev() {
+    for _j in (0..*num_tasks).rev() {
+        for _i in (0..*num_agents).rev() {
             let mut epsilon: f64 = 1.0;
+            let (s_start, s_end) = ranges[ij_counter];
             while epsilon > *eps {
-                for s in states.iter().filter(|x| x.task == j && x.agent == i) {
+                for s_ix in s_start..s_end {
+                    let s = &states[s_ix];
                     // absolutely limit the number of vector resizes
                     let mut min_action_values: Vec<(String, f64)> = Vec::with_capacity(s.trans_ix.len());
                     for t in s.trans_ix.iter() {
@@ -394,17 +444,17 @@ pub fn opt_exp_tot_cost<'a>(w: &[f64], eps: &f64, states: &'a [TeamState<'a>], t
                     mu[s.ix] = arg_minmax.to_string();
                 }
                 let mut y_bar_diff = opt_absolute_diff_vect(&x_cost_vectors, &y_cost_vectors).to_vec();
-                y_bar_diff.sort_by(|a,b| a.partial_cmp(b).unwrap());
+                y_bar_diff.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                //println!("ybar: {:?}", y_bar_diff);
                 //y_bar_diff_max_vect.sort();
-                epsilon = *y_bar_diff.last().unwrap();
+                epsilon = y_bar_diff[y_bar_diff.len() - 1];
                 //println!("eps: {}", epsilon);
-                x_cost_vectors = y_cost_vectors.to_vec();
+                x_cost_vectors = y_cost_vectors.to_owned();
             }
-            //println!("ybar: {:?}", y_cost_vectors);
-            //println!("mu: {:?}", mu);
             epsilon = 1.0;
             while epsilon > *eps {
-                for s in states.iter().filter(|x| x.agent == i && x.task == j) {
+                for s_ix in s_start..s_end {
+                    let s = &states[s_ix];
                     let chosen_action = &mu[s.ix];
                     for t in s.trans_ix.iter() {
                         let transition = &transitions[*t];
@@ -435,20 +485,20 @@ pub fn opt_exp_tot_cost<'a>(w: &[f64], eps: &f64, states: &'a [TeamState<'a>], t
                     }
                 }
                 let mut diff_task = opt_absolute_diff_vect(&x_task_cost_vector[..], &y_task_cost_vector[..]).to_vec();
-                diff_task.sort_by(|a,b| a.partial_cmp(b).unwrap());
-                let max_task_val = diff_task.last().unwrap();
+                diff_task.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                let max_task_val = diff_task[diff_task.len()-1];
                 let mut diff_agent = opt_absolute_diff_vect(&x_agent_cost_vector[..], &y_agent_cost_vector[..]).to_vec();
-                diff_agent.sort_by(|a,b| a.partial_cmp(b).unwrap());
-                let max_agent_val = diff_task.last().unwrap();
-                x_agent_cost_vector = y_agent_cost_vector.to_vec();
-                x_task_cost_vector = y_task_cost_vector.to_vec();
+                diff_agent.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                let max_agent_val = diff_agent[diff_agent.len()-1];
+                x_agent_cost_vector = y_agent_cost_vector.to_owned();
+                x_task_cost_vector = y_task_cost_vector.to_owned();
                 if max_task_val > max_agent_val {
-                    epsilon = *max_task_val;
+                    epsilon = max_task_val;
                 } else {
-                    epsilon = *max_agent_val;
+                    epsilon = max_agent_val;
                 }
-                //println!("epsilon: {:?}", epsilon);
             }
+            ij_counter += 1;
         }
     }
     //println!("init ix: {}", init_index);
@@ -617,9 +667,100 @@ pub struct TaskAllocStates<'a> {
     pub value: Vec<f64>
 }
 
+#[allow(dead_code)]
 pub struct Alg1Output {
     pub v: Vec<f64>,
     pub mu: Vec<Vec<String>>,
     pub hullset: Vec<Vec<f64>>
+}
+
+#[allow(dead_code)]
+pub struct TeamAttrs<'a> {
+    pub agent: usize,
+    pub task: usize,
+    pub dead: &'a Vec<u32>,
+    pub acc: &'a Vec<u32>,
+    pub jacc: &'a Vec<u32>
+}
+
+#[derive(Clone, Debug)]
+pub struct Permutation {
+    indices: Vec<usize>,
+}
+
+impl Permutation {
+    /// Checks if the permutation is correct
+    pub fn from_indices(v: Vec<usize>) -> Result<Self, ()> {
+        let perm = Permutation { indices: v };
+        if perm.correct() {
+            Ok(perm)
+        } else {
+            Err(())
+        }
+    }
+
+    fn correct(&self) -> bool {
+        let axis_len = self.indices.len();
+        let mut seen = vec![false; axis_len];
+        for &i in &self.indices {
+            match seen.get_mut(i) {
+                None => return false,
+                Some(s) => {
+                    if *s {
+                        return false;
+                    } else {
+                        *s = true;
+                    }
+                }
+            }
+        }
+        true
+    }
+}
+
+pub trait SortArray {
+    /// ***Panics*** if `axis` is out of bounds.
+    fn identity(&self, axis: Axis) -> Permutation;
+    fn sort_axis_by<F>(&self, axis: Axis, less_than: F) -> Permutation
+        where
+            F: FnMut(usize, usize) -> bool;
+}
+
+pub trait PermuteArray {
+    type Elem;
+    type Dim;
+    fn permute_axis(self, axis: Axis, perm: &Permutation) -> Array<Self::Elem, Self::Dim>
+        where
+            Self::Elem: Clone,
+            Self::Dim: RemoveAxis;
+}
+
+impl<A, S, D> SortArray for ArrayBase<S, D>
+    where
+        S: Data<Elem = A>,
+        D: Dimension,
+{
+    fn identity(&self, axis: Axis) -> Permutation {
+        Permutation {
+            indices: (0..self.len_of(axis)).collect(),
+        }
+    }
+
+    fn sort_axis_by<F>(&self, axis: Axis, mut less_than: F) -> Permutation
+        where
+            F: FnMut(usize, usize) -> bool,
+    {
+        let mut perm = self.identity(axis);
+        perm.indices.sort_by(move |&a, &b| {
+            if less_than(a, b) {
+                Ordering::Less
+            } else if less_than(b, a) {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }
+        });
+        perm
+    }
 }
 

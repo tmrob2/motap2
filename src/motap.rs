@@ -1,5 +1,5 @@
 mod model_checking;
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashSet};
 use model_checking::helper_methods::*;
 use model_checking::decomp_team_mdp::*;
 use model_checking::mdp2::*;
@@ -12,26 +12,28 @@ fn main() {
     // Set the alphabet of the MDP, and automata
     //let alphabet: Vec<&str> = vec!["initiate", "ready", "exit", "send"];
     let hempty: HashSet<&str> = HashSet::from_iter(vec![]);
-    let _hinitiate: HashSet<&str> = HashSet::from_iter(vec!["initiate"]);
+    let hinitiate: HashSet<&str> = HashSet::from_iter(vec!["initiate"]);
     let hready = HashSet::from_iter(vec!["ready"]);
     let hexit = HashSet::from_iter(vec!["exit"]);
-    let _hsend = HashSet::from_iter(vec!["send"]);
+    let hsend = HashSet::from_iter(vec!["send"]);
     let hini: HashSet<&str> = HashSet::from_iter(vec!["ini"]);
     let hcom: HashSet<&str> = HashSet::from_iter(vec!["com"]);
     let hsuc: HashSet<&str> = HashSet::from_iter(vec!["suc"]);
     let hfai: HashSet<&str> = HashSet::from_iter(vec!["fai"]);
     let swi: String = String::from("swi");
-    let done: &str = "done";
+    let _done: &str = "done";
     let rewards: Rewards = Rewards::NEGATIVE;
 
-    let send_1_task: DFA = construct_send_task(1, &hempty, &hinitiate, &hready, &hexit, &hsend);
-    let send_2_task: DFA = construct_send_task(2, &hempty, &hinitiate, &hready, &hexit, &hsend);
-    //let send_3_task: DFA = construct_send_task(3, &hempty, &hinitiate, &hready, &hexit, &hsend);
-    //let send_4_task: DFA = construct_send_task(4, &hempty, &hinitiate, &hready, &hexit, &hsend);
-    let mut dfas: Vec<DFA> = vec![send_1_task, send_2_task];
+    let num_tasks: usize = 2;
+    let mut dfas: Vec<DFA> = Vec::with_capacity(num_tasks);
+
+    for k in 1..num_tasks + 1 {
+        let send_k_task: DFA = construct_send_task(k as u32, &hempty, &hinitiate, &hready, &hexit, &hsend);
+        dfas.push(send_k_task);
+    }
     let mdp = construct_mdp(&hempty, &hinitiate, &hready, &hexit, &hsend);
-    let mut mdps: Vec<MDP2> = vec![mdp.clone(), mdp.clone(), mdp.clone()];
-    let num_tasks: usize = dfas.len();
+    let mdps: Vec<MDP2> = vec![mdp.clone(); 2];
+
     let num_agents: usize = mdps.len();
     let mut team_input: Vec<TeamInput> = Vec::with_capacity(num_tasks * num_agents);
     let mut local_product: Vec<DFAProductMDP> = vec![DFAProductMDP::default(); num_agents * num_tasks];
@@ -80,7 +82,7 @@ fn main() {
     for j in (0..num_tasks).rev() {
         for i in (0..num_agents).rev() {
             let loc_prod = team_input.iter().find(|x| x.agent == i && x.task == j).unwrap();
-            let (team_mdp_states, team_mdp_transitions, state_ix_counter, trans_ix_counter, update_agent_init_state, update_task_init_state) =
+            let (_team_mdp_states, _team_mdp_transitions, state_ix_counter, trans_ix_counter, update_agent_init_state, update_task_init_state) =
                 create_state_transition_mapping(&loc_prod.product.states[..], &loc_prod.product.transitions[..], i, j, prev_state_ix,
                                                 prev_trans_ix, &mut team_mdp_states,
                                                 &mut team_mdp_transitions, num_agents, num_tasks,
@@ -124,24 +126,34 @@ fn main() {
         println!();
     }*/
     let rewards: Rewards = Rewards::NEGATIVE;
-    let target: Vec<f64> = vec![-10.0, -10.0, -10.0, 0.7, 0.7];
+    println!("|S|: {}, |P|: {}", team_mdp.states.len(), team_mdp.transitions.len());
+    let target: Vec<f64> = vec![
+        -10.0, -10.0,
+        500.0, 500.0];
     let epsilon: f64 = 0.00001;
-    let mut times: Vec<f64> = Vec::with_capacity(100);
-    /*for _ in 0..100 {
+    let num_runs: usize = 1;
+    let mut times: Vec<f64> = Vec::with_capacity(num_runs);
+    for _ in 0..num_runs {
+        let ranges = create_ij_state_mapping(num_tasks, num_agents, &team_mdp.states[..]);
         let start = Instant::now();
-        let output = team_mdp.multi_obj_sched_synth(&target, &epsilon, &rewards, &false);
+        let _output = multi_obj_sched_synth(&target[..], &epsilon, &ranges[..],&team_mdp.states[..],
+                                            &team_mdp.transitions[..], &rewards, &true, num_tasks, num_agents, team_mdp.initial.ix);
         let duration = start.elapsed();
         times.push(duration.as_secs_f64());
-    }*/
+    }
+    let total_time = times.iter().fold(0.0, |sum, &val| sum + val) / num_runs as f64;
+    println!("duration: {:?}", total_time);
 
-    for _ in 0..100 {
+    let mut times: Vec<f64> = Vec::with_capacity(num_runs);
+    for _ in 0..num_runs {
         let start = Instant::now();
-        let output = team_mdp.multi_obj_sched_synth_non_iter(&target, &epsilon, &rewards, &false);
+        let _output = multi_obj_sched_synth_non_iter(&target[..], &epsilon, &team_mdp.states[..],
+                                                     &team_mdp.transitions[..], &rewards, &true, num_tasks, num_agents, team_mdp.initial.ix);
         let duration = start.elapsed();
         times.push(duration.as_secs_f64());
     }
 
-    let total_time = times.iter().fold(0.0, |sum, &val| sum + val) / 100.0;
+    let total_time = times.iter().fold(0.0, |sum, &val| sum + val) / num_runs as f64;
 
     println!("duration: {:?}", total_time);
 }
