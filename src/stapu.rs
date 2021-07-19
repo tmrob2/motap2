@@ -11,7 +11,7 @@ use std::time::Instant;
 
 fn main() {
     let mut words: HashMap<&str, HashSet<&str>> = HashMap::new();
-    let num_tasks: usize = 2;
+    let num_tasks: usize = 5;
     let mut initiate_letters: Vec<String> = Vec::with_capacity(num_tasks);
     let mut send_letters: Vec<String> = Vec::with_capacity(num_tasks);
 
@@ -76,8 +76,8 @@ fn main() {
         jacc: cross_prod_jacc
     };
     let mdp = construct_mdp(&hempty, &hinitiate, &hready, &hexit, &hsend);
-    let mdps: Vec<MDP2> = vec![mdp.clone(); 100];
-    let num_agents: usize = 100;
+    let mdps: Vec<MDP2> = vec![mdp.clone(); 2];
+    let num_agents: usize = 2;
     let mut local_prods: Vec<LocalProduct> = Vec::with_capacity(num_tasks * num_agents);
     println!("Constructing Local Products");
     for mdp in mdps.iter() {
@@ -147,18 +147,7 @@ fn main() {
 
     println!("|S|: {}, |P|: {}", team_mdp.states.len(), team_mdp.transitions.len());
 
-    let target: Vec<f64> = vec![
-        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
-        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
-        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
-        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
-        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
-        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
-        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
-        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
-        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
-        -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0, -5.0,-5.0,
-                                0.5, 0.5];
+    let target: Vec<f64> = vec![-5.0, -5.0, 0.5, 0.5, 0.5, 0.5, 0.5];
     let epsilon: f64 = 0.00001;
     let start = Instant::now();
     let _output = multi_obj_sched_synth_non_iter(team_init_index,
@@ -168,8 +157,6 @@ fn main() {
     println!("duration: {:?}", duration);
 
 }
-
-
 
 fn construct_send_task<'a>(k: u32, task: usize, num_tasks: usize, words: &'a HashMap<&'a str, HashSet<&'a str>>,
                            hempty: &'a HashSet<&'a str>, hready: &'a HashSet<&'a str>, hexit: &'a HashSet<&'a str>,
@@ -327,5 +314,4 @@ fn construct_mdp<'a>(hempty: &'a HashSet<&'a str>, hinitiate: &'a HashSet<&'a st
         labelling,
     }
 }
-
 

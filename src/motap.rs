@@ -21,7 +21,7 @@ fn main() {
     let hsuc: HashSet<&str> = HashSet::from_iter(vec!["suc"]);
     let hfai: HashSet<&str> = HashSet::from_iter(vec!["fai"]);
     let swi: String = String::from("swi");
-    let _done: &str = "done";
+    //let _done: &str = "done";
     let rewards: Rewards = Rewards::NEGATIVE;
 
     let num_tasks: usize = 2;

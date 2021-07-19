@@ -5,6 +5,7 @@ use dfa::DFATransitions;
 use super::mdp2;
 use mdp2::Transition;
 use regex::Regex;
+use std::time::Instant;
 //use std::borrow::Cow;
 //use std::hash::Hash;
 
@@ -110,6 +111,7 @@ pub fn create_new_states_and_transitions<'a, 'b>(q1: &'b [CrossProdState], q2: &
             // and the DFA to form a cross product with
             for d1 in delta1.iter().filter(|x| x.q == q1.q) {
                 for d2 in delta2.iter().filter(|x| x.q == *q2) {
+                    //let start = Instant::now();
                     // if q1 is active, and q2' becomes active then this means that a transition was taken
                     // which belongs to another task, violating the one task active condition
                     let q2_active = acc2.iter().all(|x| *x != d2.q_prime) && dead2.iter().all(|x| *x != d2.q_prime) && init2 != d2.q_prime;
@@ -136,6 +138,8 @@ pub fn create_new_states_and_transitions<'a, 'b>(q1: &'b [CrossProdState], q2: &
                             trans_counter += 1;
                         }
                     }
+                    //let duration = start.elapsed();
+                    //println!("time to determining if there is an intersectin of words: {:?}", duration);
                 }
             }
             if jacc2.iter().any(|x| x == q2) {
@@ -294,6 +298,7 @@ pub fn create_local_prod_transitions<'a>(states: &'a [LocalProdState], mdp_label
             for transition in mdp_transitions.iter().filter(|x| x.s == state.s) {
                 //println!("t: {:?}\n###########", transition);
                 let mut loc_prod_trans_to: Vec<LocalProductTransitionPair> = Vec::new();
+                let start = Instant::now();
                 for sprime in transition.s_prime.iter() {
                     let label = mdp_labelling.iter().find(|x| x.s == sprime.s).unwrap();
                     for h in label.w.iter() {
@@ -320,6 +325,8 @@ pub fn create_local_prod_transitions<'a>(states: &'a [LocalProdState], mdp_label
                     //println!("t: {:?}", new_transition);
                     local_prod_trans.push(new_transition);
                 }
+                let duration = start.elapsed();
+                println!("time taken to loop through labels and find a valid transition: {:?}", duration);
             }
         }
     }
