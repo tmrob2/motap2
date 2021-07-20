@@ -9,8 +9,9 @@ use helper_methods::*;
 use dfa::*;
 //use mdp2::*;
 use gurobi_lp::*;
-//use std::time::Instant;
-//use std::time::Instant;
+use petgraph::Graph;
+use petgraph::graph::NodeIndex;
+use ordered_float::OrderedFloat;
 
 #[allow(dead_code)]
 pub struct TeamMDP<'a> {
@@ -20,19 +21,6 @@ pub struct TeamMDP<'a> {
     pub num_agents: usize,
     pub num_tasks: usize,
     //pub task_alloc_states: Vec<TaskAllocStates<'a>>,
-}
-
-impl <'a>TeamMDP<'a> {
-
-    /// Iterative version of multi-objective model checking
-
-    /// The non iterative version of multi-objective value iteration, just loops over the state space to generate results
-
-
-    #[allow(dead_code)]
-    pub fn statistics(&self) -> (usize,usize) {
-        (self.states.len(), self.transitions.len())
-    }
 }
 
 #[allow(dead_code)]
@@ -628,6 +616,132 @@ pub fn opt_exp_tot_cost_non_iter<'a>(w: &[f64], eps: &f64, states: &'a [TeamStat
     Some((mu, r))
 }
 
+#[allow(dead_code)]
+pub fn merge_schedulers (schedulers: &Vec<Vec<String>>, team_states: &[TeamState], transitions: &[TeamTransition],
+                         init_state: usize, tasks: usize, weights: &[f64]) -> Graph<String,String> {
+    let mut stack: Vec<DFSStackState> = Vec::new();
+    let mut graph: Graph<String, String> = Graph::new();
+    let init_state = team_states[init_state].ix;
+    let c_0: Vec<usize> = (0..tasks).collect();
+    let init_g_ix = graph.add_node(format!("({},{:?})", init_state, c_0));
+    let init_stack_state: DFSStackState = DFSStackState {
+        state: init_state, indices: c_0, parent_action: None,
+        parent_prob: None, parent_node_index: None, parent_indices: None
+    };
+    stack.push(init_stack_state);
+    //println!("{:?}", stack);
+    // a sketch of the algo
+    // |
+    // |_____ find root |
+    //                  |__ If root add root transitions and (s',C') manually
+    // Start iterative part of algorithm:
+    // |______ find parent and transitions for parent |
+    //                                                |____ Add transition (s',C') to stack
+    //let mut count = 0;
+    while !stack.is_empty() {
+        let new_stack_state = stack.pop().unwrap();
+        // if the parent state is not present then this is the root and we are only interested in adding more stack states
+        if new_stack_state.parent_node_index.is_none() {
+            for t in team_states[new_stack_state.state].trans_ix.iter() {
+                let transition = &transitions[*t];
+                let mut c_prime: Vec<usize> = Vec::new();
+                for task in 0..tasks {
+                    if *transition.a == schedulers[task][team_states[new_stack_state.state].ix] {
+                        c_prime.push(task);
+                    }
+                }
+                let numerator = weights.iter().enumerate().
+                    filter(|(i,_x)| c_prime.iter().any(|j| i == j)).
+                    fold(0.0, |sum, (_j, val)| sum + val);
+
+                let denominator = weights.iter().enumerate().
+                    filter(|(i,_x)| new_stack_state.indices.iter().any(|j| i == j)).
+                    fold(0.0, |sum, (_j, val)| sum + val);
+                let p = numerator / denominator;
+                if p > 0.0 {
+                    for sprime in transition.to.iter() {
+                        let new_stack_state = DFSStackState {
+                            state: sprime.state,
+                            indices: c_prime.to_vec(),
+                            parent_action: Some(transition.a),
+                            parent_prob: Some(OrderedFloat(p)),
+                            parent_node_index: Some(init_g_ix),
+                            parent_indices: Some(new_stack_state.indices.to_vec())
+                        };
+                        if !stack.iter().any(|x| team_states[x.state].ix == team_states[new_stack_state.state].ix) {
+                            stack.push(new_stack_state);
+                        }
+                    }
+                }
+            }
+        } else {
+            // create a vertex of the current stack state
+            //   first check that the vertex does not already exist
+            let new_node_index = match graph.node_indices().find(|x| graph[*x] == format!("({},{:?})", new_stack_state.state, new_stack_state.indices)) {
+                None => {
+                    //println!("{} added to graph", format!("({},{:?})", new_stack_state.state, new_stack_state.indices));
+                    graph.add_node(format!("({},{:?})", new_stack_state.state, new_stack_state.indices))
+                }
+                Some(x) => x
+            };
+            // create an edge between the newly added vertex and the parent node index
+            graph.add_edge(
+                new_stack_state.parent_node_index.unwrap(),
+                new_node_index,
+                format!("({},{})", new_stack_state.parent_action.unwrap(), new_stack_state.parent_prob.unwrap())
+            );
+            for t in team_states[new_stack_state.state].trans_ix.iter() {
+                let transition = &transitions[*t];
+                let mut c_prime: Vec<usize> = Vec::new();
+                for task in 0..tasks {
+                    if *transition.a == schedulers[task][new_stack_state.state] {
+                        c_prime.push(task);
+                    }
+                }
+                let numerator = weights.iter().enumerate().
+                    filter(|(i,_x)| c_prime.iter().any(|j| i == j)).
+                    fold(0.0, |sum, (_j, val)| sum + val);
+
+                let denominator = weights.iter().enumerate().
+                    filter(|(i,_x)| new_stack_state.indices.iter().any(|j| i == j)).
+                    fold(0.0, |sum, (_j, val)| sum + val);
+                for sprime in transition.to.iter() {
+                    let p = numerator / denominator;
+                    if p > 0.0 {
+                        let sprime_stack_state = DFSStackState {
+                            state: sprime.state,
+                            indices: c_prime.to_vec(),
+                            parent_action: Some(transition.a),
+                            parent_prob: Some(OrderedFloat(p)),
+                            parent_node_index: Some(new_node_index),
+                            parent_indices: Some(new_stack_state.indices.to_vec())
+                        };
+                        if !stack.iter().any(|x| team_states[x.state].ix == team_states[sprime_stack_state.state].ix && x.indices == sprime_stack_state.indices) {
+                            match graph.node_indices().find(|x| graph[*x] == format!("({},{:?})", sprime_stack_state.state, sprime_stack_state.indices)) {
+                                None => stack.push(sprime_stack_state),
+                                Some(_) => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        /*
+        if count < 5 {
+            for s in stack.iter() {
+                println!("{:?}", s);
+            }
+            println!();
+        } else {
+            return graph;
+        }
+        count += 1;
+
+         */
+    }
+    graph
+}
+
 #[derive(Debug, PartialEq, Clone, Eq)]
 pub struct TeamState<'a> {
     pub state: &'a DFAModelCheckingPair<'a>,
@@ -679,5 +793,16 @@ pub struct TeamAttrs<'a> {
     pub dead: &'a Vec<u32>,
     pub acc: &'a Vec<u32>,
     pub jacc: &'a Vec<u32>
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct DFSStackState<'a> {
+    pub state: usize,
+    pub indices: Vec<usize>,
+    pub parent_action: Option<&'a String>,
+    pub parent_prob: Option<OrderedFloat<f64>>,
+    pub parent_node_index: Option<NodeIndex<u32>>,
+    pub parent_indices: Option<Vec<usize>>
 }
 

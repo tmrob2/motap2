@@ -7,6 +7,9 @@ use model_checking::dfa::*;
 use std::iter::FromIterator;
 use crate::model_checking::decomp_team_mdp::create_state_transition_mapping;
 use std::time::Instant;
+use petgraph::dot::Dot;
+use std::fs::File;
+use std::io::Write;
 
 fn main() {
     // Set the alphabet of the MDP, and automata
@@ -23,6 +26,7 @@ fn main() {
     let swi: String = String::from("swi");
     //let _done: &str = "done";
     let rewards: Rewards = Rewards::NEGATIVE;
+    let create_randomised_scheduler: bool = true;
 
     let num_tasks: usize = 2;
     let mut dfas: Vec<DFA> = Vec::with_capacity(num_tasks);
@@ -132,12 +136,12 @@ fn main() {
         500.0, 500.0];
     let epsilon: f64 = 0.00001;
     let num_runs: usize = 1;
+    let ranges = create_ij_state_mapping(num_tasks, num_agents, &team_mdp.states[..]);
     let mut times: Vec<f64> = Vec::with_capacity(num_runs);
     for _ in 0..num_runs {
-        let ranges = create_ij_state_mapping(num_tasks, num_agents, &team_mdp.states[..]);
         let start = Instant::now();
         let _output = multi_obj_sched_synth(&target[..], &epsilon, &ranges[..],&team_mdp.states[..],
-                                            &team_mdp.transitions[..], &rewards, &true, num_tasks, num_agents, team_mdp.initial.ix);
+                                            &team_mdp.transitions[..], &rewards, &false, num_tasks, num_agents, team_mdp.initial.ix);
         let duration = start.elapsed();
         times.push(duration.as_secs_f64());
     }
@@ -148,7 +152,7 @@ fn main() {
     for _ in 0..num_runs {
         let start = Instant::now();
         let _output = multi_obj_sched_synth_non_iter(&target[..], &epsilon, &team_mdp.states[..],
-                                                     &team_mdp.transitions[..], &rewards, &true, num_tasks, num_agents, team_mdp.initial.ix);
+                                                     &team_mdp.transitions[..], &rewards, &false, num_tasks, num_agents, team_mdp.initial.ix);
         let duration = start.elapsed();
         times.push(duration.as_secs_f64());
     }
@@ -156,6 +160,16 @@ fn main() {
     let total_time = times.iter().fold(0.0, |sum, &val| sum + val) / num_runs as f64;
 
     println!("duration: {:?}", total_time);
+
+    if create_randomised_scheduler {
+        let output = multi_obj_sched_synth(&target[..], &epsilon, &ranges[..],&team_mdp.states[..],
+                                            &team_mdp.transitions[..], &rewards, &true, num_tasks, num_agents, team_mdp.initial.ix);
+        let graph = merge_schedulers(&output.mu, &team_mdp.states[..],
+                                     &team_mdp.transitions[..], team_mdp.initial.ix, num_tasks, &output.v[..]);
+        let dot = Dot::new(&graph).to_string();
+        let mut file = File::create("diagnostics/merged_sched.dot").unwrap();
+        file.write_all(&dot.as_bytes()).ok();
+    }
 }
 
 fn construct_send_task<'a, 'b>(k: u32, hempty: &'a HashSet<&'a str>, hinitiate: &'a HashSet<&'a str>,
